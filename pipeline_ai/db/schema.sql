@@ -82,7 +82,7 @@ create table capteur (
   FOREIGN KEY (machine_id) REFERENCES machine(machine_id),
 
   CHECK (type_mesure IN ('Pression', 'Debit', 'Temperature', 'Vibration'))
-)
+);
 
 -- =========================
 -- TABLE MESURE (temps réel)
@@ -138,7 +138,7 @@ create table maintenance (
   date DATE NOT NULL,
   type VARCHAR,
   description TEXT
-)
+);
 
 -- =========================
 -- FUNCTION CHECK_SEUIL
@@ -221,3 +221,10 @@ WHERE m.status = 'Alarme';
 -- ======================================
 -- VUE 3 — Dernière mesure par capteur
 -- ======================================
+CREATE OR REPLACE VIEW vue_derniere_mesure AS
+SELECT DISTINCT ON (capteur_id)
+    capteur_id,
+    valeur,
+    timestamp
+FROM mesure
+ORDER BY capteur_id, timestamp DESC;
