@@ -115,9 +115,34 @@ Connect the MCP server to Claude Desktop by adding this to your `claude_desktop_
 ```json
 {
   "mcpServers": {
-    "pipeline-industrial": {
-      "command": "python",
-      "args": ["mcp/factory_mcp_server.py"]
+    "factory-uns": {
+      "command": "C:\\projet\\factory_uns\\venv-factory\\Scripts\\python.exe",
+      "args": [
+        "C:\\projet\\factory_uns\\mcp\\factory_mcp_server.py"
+      ],
+      "env": {
+        "POSTGRES_HOST": "localhost",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "pipeline_db",
+        "POSTGRES_USER": "iotuser",
+        "POSTGRES_PASS": "iotfrontier"
+      }
+    }
+  },
+  "preferences": {
+    "coworkScheduledTasksEnabled": false,
+    "ccdScheduledTasksEnabled": false,
+    "sidebarMode": "chat",
+    "coworkWebSearchEnabled": true,
+    "epitaxyPrefs": {
+      "starred-local-code-sessions": [],
+      "starred-cowork-spaces": [],
+      "starred-session-groups": [],
+      "dframe-local-slice": {
+        "pinnedOrder": [],
+        "customGroupAssignments": {},
+        "customGroupOrder": {}
+      }
     }
   }
 }
@@ -200,39 +225,3 @@ fastapi
 uvicorn[standard]
 python-dotenv
 ```
-
-## claude desktop config
-
-{
-  "mcpServers": {
-    "factory-uns": {
-      "command": "C:\\projet\\factory_uns\\venv-factory\\Scripts\\python.exe",
-      "args": [
-        "C:\\projet\\factory_uns\\mcp\\factory_mcp_server.py"
-      ],
-      "env": {
-        "POSTGRES_HOST": "localhost",
-        "POSTGRES_PORT": "5432",
-        "POSTGRES_DB": "pipeline_db",
-        "POSTGRES_USER": "iotuser",
-        "POSTGRES_PASS": "iotfrontier"
-      }
-    }
-  },
-  "preferences": {
-    "coworkScheduledTasksEnabled": false,
-    "ccdScheduledTasksEnabled": false,
-    "sidebarMode": "chat",
-    "coworkWebSearchEnabled": true,
-    "epitaxyPrefs": {
-      "starred-local-code-sessions": [],
-      "starred-cowork-spaces": [],
-      "starred-session-groups": [],
-      "dframe-local-slice": {
-        "pinnedOrder": [],
-        "customGroupAssignments": {},
-        "customGroupOrder": {}
-      }
-    }
-  }
-}
