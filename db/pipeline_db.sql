@@ -210,6 +210,11 @@ FROM mesure m
 JOIN capteur c ON m.capteur_id = c.capteur_id
 ORDER BY m.capteur_id, m.timestamp DESC;
 
+
+
+
+
+
 -- ============================================================
 -- INSERTS
 -- ============================================================
