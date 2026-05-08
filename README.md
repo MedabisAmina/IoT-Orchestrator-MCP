@@ -1,6 +1,7 @@
 # Pipeline IIoT — Oil & Gas Monitoring System
 
-Industrial IoT monitoring platform for Oil & Gas pipeline infrastructure in Algeria. Simulates real-time sensor data (pressure, temperature, flow rate), stores it in PostgreSQL, exposes it via a FastAPI REST API and a full-featured MCP server for AI-assisted operations.
+Pipeline IIoT — Oil & Gas Monitoring SystemAn Industrial IoT monitoring platform for Oil & Gas pipeline infrastructure, specifically designed for the Edge-Fog continuum. This system bridges the "semantic gap" between raw sensor data and strategic decision-making using a Context-Aware Microservices Orchestration approach. 
+ It simulates real-time telemetry from Algerian pipeline networks, stores data in PostgreSQL, and exposes a high-level Model Context Protocol (MCP) server to enable AI Agents (like Claude) to perform natural language operations. 
 
 ---
 
