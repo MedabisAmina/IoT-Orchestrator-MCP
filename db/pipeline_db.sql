@@ -1,3 +1,5 @@
+
+
 -- ============================================================
 -- pipeline_db.sql — Run this in pgAdmin Query Tool
 -- ============================================================
@@ -210,11 +212,6 @@ FROM mesure m
 JOIN capteur c ON m.capteur_id = c.capteur_id
 ORDER BY m.capteur_id, m.timestamp DESC;
 
-
-
-
-
-
 -- ============================================================
 -- INSERTS
 -- ============================================================
@@ -295,3 +292,168 @@ DELETE FROM maintenance WHERE description LIKE 'Maintenance suite%';
 
 SELECT * FROM vue_alertes_actives LIMIT 10;
 SELECT * FROM vue_derniere_mesure;
+
+
+
+SELECT machine_id, type, status, disponibilite FROM machine;
+
+SELECT * FROM vue_derniere_mesure WHERE capteur_id = 'C1';
+
+SELECT * FROM vue_alertes_actives;
+
+
+
+
+
+ALTER TABLE station
+DROP CONSTRAINT station_type_station_check;
+
+ALTER TABLE station
+ADD CONSTRAINT station_type_station_check
+CHECK (type_station IN ('Pompage', 'Compression', 'TerminalDepart', 'TerminalArrivee'));
+
+
+
+
+
+
+INSERT INTO station (station_id, nom_station, type_station, localisation, status, pipeline_id) VALUES
+('S3', 'Terminal Départ Nord', 'TerminalDepart', 'Alger', 'EnMarche', 'P1'),
+('S4', 'Terminal Arrivée Nord', 'TerminalArrivee', 'Oran', 'EnMarche', 'P1'),
+('S5', 'Terminal Départ Sud', 'TerminalDepart', 'Hassi Messaoud', 'EnMarche', 'P2'),
+('S6', 'Terminal Arrivée Sud', 'TerminalArrivee', 'Ouargla', 'EnMarche', 'P2');
+
+
+
+
+
+-- =========================
+-- TABLE TARIF
+-- =========================
+CREATE TABLE tarif (
+  tarif_id VARCHAR PRIMARY KEY,
+  type_produit VARCHAR NOT NULL,
+  type_mesure VARCHAR NOT NULL,
+  prix_unitaire FLOAT NOT NULL CHECK (prix_unitaire > 0),
+  unite VARCHAR NOT NULL,
+  date_effet DATE NOT NULL,
+  CHECK (type_produit IN ('PetroleBrut', 'Condensat', 'GPL', 'GazNaturel')),
+  CHECK (type_mesure IN ('Pression', 'Debit', 'Temperature'))
+);
+
+-- =========================
+-- TABLE TRANSACTION_VOLUME
+-- =========================
+CREATE TABLE transaction_volume (
+  transaction_id SERIAL PRIMARY KEY,
+  station_id VARCHAR NOT NULL,
+  capteur_id VARCHAR NOT NULL,
+  tarif_id VARCHAR NOT NULL,
+  type_mesure VARCHAR NOT NULL,
+  valeur FLOAT NOT NULL,
+  cout FLOAT NOT NULL CHECK (cout > 0),
+  timestamp TIMESTAMP NOT NULL,
+  FOREIGN KEY (station_id) REFERENCES station(station_id),
+  FOREIGN KEY (capteur_id) REFERENCES capteur(capteur_id),
+  FOREIGN KEY (tarif_id) REFERENCES tarif(tarif_id)
+);
+
+-- =========================
+-- TABLE BUDGET
+-- =========================
+CREATE TABLE budget (
+  budget_id SERIAL PRIMARY KEY,
+  pipeline_id VARCHAR NOT NULL,
+  periode VARCHAR NOT NULL,
+  budget_alloue FLOAT NOT NULL CHECK (budget_alloue > 0),
+  cout_total FLOAT DEFAULT 0,
+  solde FLOAT GENERATED ALWAYS AS (budget_alloue - cout_total) STORED,
+  FOREIGN KEY (pipeline_id) REFERENCES pipeline(pipeline_id)
+);
+
+-- =========================
+-- FUNCTION CALC_COUT
+-- =========================
+CREATE OR REPLACE FUNCTION calc_cout()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_station_type VARCHAR;
+  v_type_mesure  VARCHAR;
+  v_type_produit VARCHAR;
+  v_tarif_id     VARCHAR;
+  v_prix         FLOAT;
+  v_cout         FLOAT;
+  v_station_id   VARCHAR;
+  v_pipeline_id  VARCHAR;
+BEGIN
+  SELECT c.type_mesure, m.station_id
+  INTO v_type_mesure, v_station_id
+  FROM capteur c
+  JOIN machine m ON c.machine_id = m.machine_id
+  WHERE c.capteur_id = NEW.capteur_id;
+
+  SELECT type_station, pipeline_id
+  INTO v_station_type, v_pipeline_id
+  FROM station WHERE station_id = v_station_id;
+
+  -- Only TerminalArrivee, skip Vibration
+  IF v_station_type = 'TerminalArrivee' AND v_type_mesure != 'Vibration' THEN
+
+    SELECT p.type_produit INTO v_type_produit
+    FROM pipeline p WHERE p.pipeline_id = v_pipeline_id;
+
+    SELECT tarif_id, prix_unitaire INTO v_tarif_id, v_prix
+    FROM tarif
+    WHERE type_produit = v_type_produit
+      AND type_mesure  = v_type_mesure
+    ORDER BY date_effet DESC LIMIT 1;
+
+    IF v_tarif_id IS NULL THEN
+      RETURN NEW;
+    END IF;
+
+    v_cout := NEW.valeur * v_prix;
+
+    INSERT INTO transaction_volume (
+      station_id, capteur_id, tarif_id, type_mesure, valeur, cout, timestamp
+    ) VALUES (
+      v_station_id, NEW.capteur_id, v_tarif_id,
+      v_type_mesure, NEW.valeur, v_cout, NEW.timestamp
+    );
+
+    UPDATE budget
+    SET cout_total = cout_total + v_cout
+    WHERE pipeline_id = v_pipeline_id
+      AND periode = TO_CHAR(NEW.timestamp, 'YYYY-MM');
+
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =========================
+-- TRIGGER TRIGGER_COUT
+-- =========================
+CREATE TRIGGER trigger_cout
+AFTER INSERT ON mesure
+FOR EACH ROW
+EXECUTE FUNCTION calc_cout();
+
+-- =========================
+-- INSERTS — TARIFS
+-- =========================
+INSERT INTO tarif (tarif_id, type_produit, type_mesure, prix_unitaire, unite, date_effet) VALUES
+('T1', 'PetroleBrut', 'Debit',       45.50, 'DZD/m3',  '2024-01-01'),
+('T2', 'PetroleBrut', 'Pression',     2.10, 'DZD/bar', '2024-01-01'),
+('T3', 'PetroleBrut', 'Temperature',  1.50, 'DZD/C',   '2024-01-01'),
+('T4', 'GazNaturel',  'Debit',       12.75, 'DZD/m3',  '2024-01-01'),
+('T5', 'GazNaturel',  'Pression',     1.80, 'DZD/bar', '2024-01-01'),
+('T6', 'GazNaturel',  'Temperature',  0.90, 'DZD/C',   '2024-01-01');
+
+-- =========================
+-- INSERTS — BUDGET
+-- =========================
+INSERT INTO budget (pipeline_id, periode, budget_alloue, cout_total) VALUES
+('P1', '2025-05', 500000, 0),
+('P2', '2025-05', 300000, 0);

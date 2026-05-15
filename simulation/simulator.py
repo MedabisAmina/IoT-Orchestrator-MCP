@@ -19,7 +19,6 @@ import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load .env from project root (works whether called directly or imported)
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # ─── DB Connection ────────────────────────────────────────────────────────────
@@ -33,24 +32,80 @@ def get_connection():
     )
 
 # ─── Sensor Configuration ─────────────────────────────────────────────────────
+# C1, C2, C3,  — existing machines M1/M2 (Pompage/Compression stations)
+# C5–C10          — new machines M3–M6 on terminal stations S3–S6
+
 SENSORS = {
+    # --- Station S1 (Pompage, Pipeline P1) ---
     "C1": {
         "type": "Pression",    "unit": "bar",
         "normal":  (15, 90),
-        "anomaly_low":  5,
-        "anomaly_high": 115,
+        "anomaly_low":  5,     "anomaly_high": 115,
     },
     "C2": {
         "type": "Temperature", "unit": "°C",
         "normal":  (10, 80),
-        "anomaly_low":  -5,
-        "anomaly_high": 105,
+        "anomaly_low":  -5,    "anomaly_high": 105,
     },
+    # --- Station S2 (Compression, Pipeline P2) ---
     "C3": {
         "type": "Debit",       "unit": "m3/h",
         "normal":  (100, 450),
-        "anomaly_low":  20,
-        "anomaly_high": 560,
+        "anomaly_low":  20,    "anomaly_high": 560,
+    },
+    # --- Station S3 (TerminalDepart, Pipeline P1) ---
+    "C5": {
+        "type": "Pression",    "unit": "bar",
+        "normal":  (20, 85),
+        "anomaly_low":  5,     "anomaly_high": 110,
+    },
+    "C6": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal":  (120, 430),
+        "anomaly_low":  30,    "anomaly_high": 540,
+    },
+    # --- Station S4 (TerminalArrivee, Pipeline P1) — triggers cost calc ---
+    "C7": {
+        "type": "Pression",    "unit": "bar",
+        "normal":  (18, 82),
+        "anomaly_low":  4,     "anomaly_high": 108,
+    },
+    "C8": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal":  (110, 420),
+        "anomaly_low":  25,    "anomaly_high": 530,
+    },
+    "C9": {
+        "type": "Temperature", "unit": "°C",
+        "normal":  (12, 75),
+        "anomaly_low":  -3,    "anomaly_high": 100,
+    },
+    # --- Station S5 (TerminalDepart, Pipeline P2) ---
+    "C10": {
+        "type": "Pression",    "unit": "bar",
+        "normal":  (15, 78),
+        "anomaly_low":  4,     "anomaly_high": 105,
+    },
+    "C11": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal":  (80, 380),
+        "anomaly_low":  20,    "anomaly_high": 490,
+    },
+    # --- Station S6 (TerminalArrivee, Pipeline P2) — triggers cost calc ---
+    "C12": {
+        "type": "Pression",    "unit": "bar",
+        "normal":  (12, 75),
+        "anomaly_low":  3,     "anomaly_high": 100,
+    },
+    "C13": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal":  (70, 360),
+        "anomaly_low":  15,    "anomaly_high": 470,
+    },
+    "C14": {
+        "type": "Temperature", "unit": "°C",
+        "normal":  (10, 70),
+        "anomaly_low":  -2,    "anomaly_high": 95,
     },
 }
 
@@ -92,13 +147,19 @@ def check_last_alerts(conn, limit: int = 5):
         """, (limit,))
         return cur.fetchall()
 
+def check_last_transactions(conn, limit: int = 3):
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT transaction_id, station_id, type_mesure, valeur, cout, timestamp
+            FROM transaction_volume
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, (limit,))
+        return cur.fetchall()
+
 # ─── Main simulation loop ──────────────────────────────────────────────────────
 def run_simulator(interval: int = 5, force_anomaly: bool = False):
-    """
-    Main loop: inserts one mesure per capteur every `interval` seconds.
-    Called directly or imported by api/main.py.
-    """
-    interval  = int(os.getenv("SIM_INTERVAL", interval))
+    interval      = int(os.getenv("SIM_INTERVAL", interval))
     force_anomaly = os.getenv("SIM_FORCE_ANOMALY", str(force_anomaly)).lower() == "true" or force_anomaly
 
     print("🚀 Pipeline Sensor Simulator started")
@@ -146,6 +207,12 @@ def run_simulator(interval: int = 5, force_anomaly: bool = False):
                         print(f"   alerte_id={a[0]} | {a[1]} | val={a[2]} | {a[4]} | {a[5]}")
                 else:
                     print("\n✅ No alerts yet.")
+
+                transactions = check_last_transactions(conn)
+                if transactions:
+                    print(f"\n💰 Last cost transactions ({len(transactions)} shown):")
+                    for t in transactions:
+                        print(f"   tx_id={t[0]} | station={t[1]} | {t[2]} | val={t[3]} | cout={t[4]:.2f} DZD")
 
             print(f"   Total inserts: {total_inserts} | Anomalies: {anomaly_count}")
             time.sleep(interval)

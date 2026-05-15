@@ -1,5 +1,5 @@
 """
-mcp/factory_mcp_server.py — Full-featured MCP server (22 tools)
+mcp/factory_mcp_server.py — Full-featured MCP server (29 tools)
 Source: github (teammate) — fixed to use shared .env
 
 Connect via Claude Desktop:
@@ -44,8 +44,9 @@ mcp = FastMCP(
     instructions=(
         "You are an Industrial Oil & Gas IoT assistant. "
         "The database contains pipelines, stations, machines, sensors, "
-        "measurements, alerts, maintenance history and industrial infrastructure data. "
-        "Use the available tools to answer operational questions."
+        "measurements, alerts, maintenance history, tariffs, transactions, "
+        "budgets and industrial infrastructure data. "
+        "Use the available tools to answer operational and financial questions."
     ),
 )
 
@@ -908,6 +909,428 @@ def run_query(sql: str) -> list[dict]:
             return [dict(row) for row in cur.fetchall()]
 
 # =========================================================
+# TOOL 23 — GET BUDGET STATUS
+# =========================================================
+
+@mcp.tool
+def get_budget_status(
+    pipeline_id: str = "",
+    periode: str = ""
+) -> list[dict]:
+
+    """
+    Return budget status for pipelines.
+    Optionally filter by pipeline_id and/or periode (format: YYYY-MM).
+    Shows budget_alloue, cout_total, solde and consumption percentage.
+    """
+
+    sql = """
+        SELECT
+            b.budget_id,
+            b.pipeline_id,
+            p.nom_pipeline,
+            p.type_produit,
+            b.periode,
+            b.budget_alloue,
+            b.cout_total,
+            b.solde,
+            ROUND(
+                CASE
+                    WHEN b.budget_alloue > 0
+                    THEN (b.cout_total / b.budget_alloue * 100)::NUMERIC
+                    ELSE 0
+                END, 2
+            ) AS pct_consomme
+        FROM budget b
+        JOIN pipeline p ON b.pipeline_id = p.pipeline_id
+        WHERE (%s = '' OR b.pipeline_id = %s)
+          AND (%s = '' OR b.periode = %s)
+        ORDER BY b.periode DESC, b.pipeline_id;
+    """
+
+    with get_connection() as conn:
+
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+
+            cur.execute(sql, (
+                pipeline_id, pipeline_id,
+                periode, periode
+            ))
+
+            return [dict(row) for row in cur.fetchall()]
+
+# =========================================================
+# TOOL 24 — GET TARIFS
+# =========================================================
+
+@mcp.tool
+def get_tarifs(
+    type_produit: str = "",
+    type_mesure: str = ""
+) -> list[dict]:
+
+    """
+    Return pricing tariffs.
+    Optionally filter by type_produit (PetroleBrut, Condensat, GPL, GazNaturel)
+    and/or type_mesure (Pression, Debit, Temperature).
+    Returns the most recent tariff per product/measure combination first.
+    """
+
+    sql = """
+        SELECT
+            tarif_id,
+            type_produit,
+            type_mesure,
+            prix_unitaire,
+            unite,
+            date_effet
+        FROM tarif
+        WHERE (%s = '' OR type_produit = %s)
+          AND (%s = '' OR type_mesure  = %s)
+        ORDER BY type_produit, type_mesure, date_effet DESC;
+    """
+
+    with get_connection() as conn:
+
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+
+            cur.execute(sql, (
+                type_produit, type_produit,
+                type_mesure,  type_mesure
+            ))
+
+            return [dict(row) for row in cur.fetchall()]
+
+# =========================================================
+# TOOL 25 — GET TRANSACTION HISTORY
+# =========================================================
+
+@mcp.tool
+def get_transaction_history(
+    pipeline_id: str = "",
+    station_id: str = "",
+    hours: int = 24
+) -> list[dict]:
+
+    """
+    Return recent volume transactions with costs.
+    Optionally filter by pipeline_id or station_id.
+    Default window is the last 24 hours.
+    """
+
+    sql = """
+        SELECT
+            tv.transaction_id,
+            tv.station_id,
+            st.nom_station,
+            pi.pipeline_id,
+            pi.nom_pipeline,
+            tv.capteur_id,
+            tv.tarif_id,
+            tv.type_mesure,
+            tv.valeur,
+            tv.cout,
+            tv.timestamp
+        FROM transaction_volume tv
+        JOIN station   st ON tv.station_id   = st.station_id
+        JOIN pipeline  pi ON st.pipeline_id  = pi.pipeline_id
+        WHERE tv.timestamp > NOW() - (%s || ' hours')::INTERVAL
+          AND (%s = '' OR pi.pipeline_id = %s)
+          AND (%s = '' OR tv.station_id  = %s)
+        ORDER BY tv.timestamp DESC
+        LIMIT 200;
+    """
+
+    with get_connection() as conn:
+
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+
+            cur.execute(sql, (
+                hours,
+                pipeline_id, pipeline_id,
+                station_id,  station_id
+            ))
+
+            return [dict(row) for row in cur.fetchall()]
+
+# =========================================================
+# TOOL 26 — GET COST SUMMARY BY PIPELINE
+# =========================================================
+
+@mcp.tool
+def get_cost_summary_by_pipeline(
+    periode: str = ""
+) -> list[dict]:
+
+    """
+    Aggregate cost breakdown per pipeline for a given period (YYYY-MM).
+    If no period is specified, uses the current month.
+    Shows total cost, number of transactions, average cost per transaction,
+    and cost split by measure type.
+    """
+
+    sql = """
+        SELECT
+            pi.pipeline_id,
+            pi.nom_pipeline,
+            pi.type_produit,
+            TO_CHAR(tv.timestamp, 'YYYY-MM') AS periode,
+            COUNT(tv.transaction_id)          AS nb_transactions,
+            ROUND(SUM(tv.cout)::NUMERIC, 2)   AS cout_total,
+            ROUND(AVG(tv.cout)::NUMERIC, 2)   AS cout_moyen,
+            ROUND(
+                SUM(tv.cout) FILTER (WHERE tv.type_mesure = 'Debit')::NUMERIC,
+                2
+            ) AS cout_debit,
+            ROUND(
+                SUM(tv.cout) FILTER (WHERE tv.type_mesure = 'Pression')::NUMERIC,
+                2
+            ) AS cout_pression,
+            ROUND(
+                SUM(tv.cout) FILTER (WHERE tv.type_mesure = 'Temperature')::NUMERIC,
+                2
+            ) AS cout_temperature
+        FROM transaction_volume tv
+        JOIN station  st ON tv.station_id  = st.station_id
+        JOIN pipeline pi ON st.pipeline_id = pi.pipeline_id
+        WHERE (%s = '' OR TO_CHAR(tv.timestamp, 'YYYY-MM') = %s)
+        GROUP BY pi.pipeline_id, pi.nom_pipeline, pi.type_produit,
+                 TO_CHAR(tv.timestamp, 'YYYY-MM')
+        ORDER BY periode DESC, cout_total DESC;
+    """
+
+    with get_connection() as conn:
+
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+
+            cur.execute(sql, (periode, periode))
+
+            return [dict(row) for row in cur.fetchall()]
+
+# =========================================================
+# TOOL 27 — GET BUDGET ALERTS (OVERSPEND / NEAR LIMIT)
+# =========================================================
+
+@mcp.tool
+def get_budget_alerts(
+    warning_threshold_pct: float = 80.0
+) -> list[dict]:
+
+    """
+    Return budgets that are over the warning threshold or already exceeded.
+    Default threshold is 80% consumption.
+    Returns status: 'Depasse' if over 100%, 'Alerte' if over the threshold,
+    'Normal' otherwise.
+    """
+
+    sql = """
+        SELECT
+            b.budget_id,
+            b.pipeline_id,
+            p.nom_pipeline,
+            b.periode,
+            b.budget_alloue,
+            b.cout_total,
+            b.solde,
+            ROUND(
+                (b.cout_total / NULLIF(b.budget_alloue, 0) * 100)::NUMERIC,
+                2
+            ) AS pct_consomme,
+            CASE
+                WHEN b.cout_total >= b.budget_alloue
+                    THEN 'Depasse'
+                WHEN b.cout_total >= b.budget_alloue * (%s / 100.0)
+                    THEN 'Alerte'
+                ELSE 'Normal'
+            END AS budget_status
+        FROM budget b
+        JOIN pipeline p ON b.pipeline_id = p.pipeline_id
+        WHERE b.cout_total >= b.budget_alloue * (%s / 100.0)
+        ORDER BY pct_consomme DESC;
+    """
+
+    with get_connection() as conn:
+
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+
+            cur.execute(sql, (
+                warning_threshold_pct,
+                warning_threshold_pct
+            ))
+
+            return [dict(row) for row in cur.fetchall()]
+
+# =========================================================
+# TOOL 28 — UPDATE TARIF
+# =========================================================
+
+@mcp.tool
+def update_tarif(
+    type_produit: str,
+    type_mesure: str,
+    nouveau_prix: float,
+    unite: str
+) -> dict:
+
+    """
+    Insert a new tariff entry that supersedes the previous one
+    for a given product/measure combination.
+    type_produit: PetroleBrut | Condensat | GPL | GazNaturel
+    type_mesure : Pression | Debit | Temperature
+    nouveau_prix: positive float (price per unit)
+    unite       : e.g. 'DZD/m3', 'DZD/bar', 'DZD/C'
+    """
+
+    allowed_produits = ["PetroleBrut", "Condensat", "GPL", "GazNaturel"]
+    allowed_mesures  = ["Pression", "Debit", "Temperature"]
+
+    if type_produit not in allowed_produits:
+        return {"success": False, "error": f"Invalid type_produit: {type_produit}"}
+
+    if type_mesure not in allowed_mesures:
+        return {"success": False, "error": f"Invalid type_mesure: {type_mesure}"}
+
+    if nouveau_prix <= 0:
+        return {"success": False, "error": "nouveau_prix must be > 0"}
+
+    # Build a new tarif_id from the current max numeric suffix
+    sql_new_id = """
+        SELECT COALESCE(MAX(CAST(SUBSTRING(tarif_id FROM 2) AS INT)), 0) + 1
+        AS next_id
+        FROM tarif
+        WHERE tarif_id ~ '^T[0-9]+$';
+    """
+
+    sql_insert = """
+        INSERT INTO tarif (tarif_id, type_produit, type_mesure,
+                           prix_unitaire, unite, date_effet)
+        VALUES (%s, %s, %s, %s, %s, CURRENT_DATE)
+        RETURNING tarif_id, date_effet;
+    """
+
+    with get_connection() as conn:
+
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+
+            cur.execute(sql_new_id)
+            next_id = cur.fetchone()["next_id"]
+            new_tarif_id = f"T{next_id}"
+
+            cur.execute(sql_insert, (
+                new_tarif_id,
+                type_produit,
+                type_mesure,
+                nouveau_prix,
+                unite
+            ))
+
+            result = cur.fetchone()
+            conn.commit()
+
+    return {
+        "success":     True,
+        "tarif_id":    result["tarif_id"],
+        "type_produit": type_produit,
+        "type_mesure":  type_mesure,
+        "nouveau_prix": nouveau_prix,
+        "unite":        unite,
+        "date_effet":   str(result["date_effet"])
+    }
+
+# =========================================================
+# TOOL 29 — SET BUDGET
+# =========================================================
+
+@mcp.tool
+def set_budget(
+    pipeline_id: str,
+    periode: str,
+    budget_alloue: float
+) -> dict:
+
+    """
+    Create or update a budget allocation for a pipeline/period.
+    pipeline_id  : existing pipeline (e.g. 'P1')
+    periode      : month string in YYYY-MM format (e.g. '2025-06')
+    budget_alloue: positive float — allocated budget in DZD
+    If a budget already exists for that pipeline+period it is updated;
+    otherwise a new row is inserted.
+    """
+
+    if budget_alloue <= 0:
+        return {"success": False, "error": "budget_alloue must be > 0"}
+
+    sql_upsert = """
+        INSERT INTO budget (pipeline_id, periode, budget_alloue, cout_total)
+        VALUES (%s, %s, %s, 0)
+        ON CONFLICT (pipeline_id, periode)
+        DO UPDATE SET budget_alloue = EXCLUDED.budget_alloue
+        RETURNING budget_id, pipeline_id, periode, budget_alloue, cout_total, solde;
+    """
+
+    # budget table has no unique constraint on (pipeline_id, periode) by default
+    # so we do a manual upsert with SELECT + INSERT/UPDATE
+    sql_select = """
+        SELECT budget_id FROM budget
+        WHERE pipeline_id = %s AND periode = %s;
+    """
+
+    sql_insert = """
+        INSERT INTO budget (pipeline_id, periode, budget_alloue, cout_total)
+        VALUES (%s, %s, %s, 0)
+        RETURNING budget_id, pipeline_id, periode, budget_alloue, cout_total, solde;
+    """
+
+    sql_update = """
+        UPDATE budget
+        SET budget_alloue = %s
+        WHERE pipeline_id = %s AND periode = %s
+        RETURNING budget_id, pipeline_id, periode, budget_alloue, cout_total, solde;
+    """
+
+    with get_connection() as conn:
+
+        with conn.cursor(
+            cursor_factory=psycopg2.extras.RealDictCursor
+        ) as cur:
+
+            cur.execute(sql_select, (pipeline_id, periode))
+            existing = cur.fetchone()
+
+            if existing:
+                cur.execute(sql_update, (budget_alloue, pipeline_id, periode))
+                action = "updated"
+            else:
+                cur.execute(sql_insert, (pipeline_id, periode, budget_alloue))
+                action = "created"
+
+            row = cur.fetchone()
+            conn.commit()
+
+    return {
+        "success":       True,
+        "action":        action,
+        "budget_id":     row["budget_id"],
+        "pipeline_id":   row["pipeline_id"],
+        "periode":       row["periode"],
+        "budget_alloue": row["budget_alloue"],
+        "cout_total":    row["cout_total"],
+        "solde":         row["solde"]
+    }
+
+# =========================================================
 # RESOURCE — SCHEMA OVERVIEW
 # =========================================================
 
@@ -933,6 +1356,9 @@ def schema_overview() -> str:
     - seuil_capteur
     - alerte
     - maintenance
+    - tarif
+    - transaction_volume
+    - budget
 
     RELATIONS:
     Zone -> Pipeline -> Station -> Machine -> Sensor
@@ -941,7 +1367,6 @@ def schema_overview() -> str:
     - Pression
     - Temperature
     - Debit
-    - Vibration
 
     MACHINE STATUS:
     - EnMarche
@@ -949,11 +1374,18 @@ def schema_overview() -> str:
     - Maintenance
     - Alarme
 
+    FINANCIAL:
+    - tarif         : unit prices per product/measure (DZD)
+    - transaction_volume : auto-generated cost records at TerminalArrivee
+    - budget        : monthly allocated vs. consumed budget per pipeline
+
     FEATURES:
     - Real-time industrial measurements
     - Automatic alerts via trigger
+    - Automatic cost calculation via trigger (calc_cout)
     - Maintenance history
     - Industrial monitoring
+    - Budget tracking and overspend alerts
     - Oil & Gas infrastructure analytics
 
     """

@@ -29,7 +29,10 @@ def get_connection():
     )
 
 # ─── Sensor Configuration ──────────────────────────────────────────────────────
+# C1, C2, C3,  — existing machines M1/M2 (Pompage/Compression stations)
+# C5–C14          — new machines on terminal stations S3–S6
 SENSORS = {
+    # --- Station S1 (Pompage, Pipeline P1) ---
     "C1": {
         "type": "Pression",    "unit": "bar",
         "normal_base": 55,     "daily_amplitude": 20,  "noise_std": 3,
@@ -40,10 +43,65 @@ SENSORS = {
         "normal_base": 45,     "daily_amplitude": 15,  "noise_std": 2,
         "threshold": (0, 90)
     },
+    # --- Station S2 (Compression, Pipeline P2) ---
     "C3": {
         "type": "Debit",       "unit": "m3/h",
         "normal_base": 275,    "daily_amplitude": 80,  "noise_std": 15,
         "threshold": (50, 500)
+    },
+    # --- Station S3 (TerminalDepart, Pipeline P1) ---
+    "C5": {
+        "type": "Pression",    "unit": "bar",
+        "normal_base": 52,     "daily_amplitude": 18,  "noise_std": 3,
+        "threshold": (10, 100)
+    },
+    "C6": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal_base": 270,    "daily_amplitude": 75,  "noise_std": 14,
+        "threshold": (50, 500)
+    },
+    # --- Station S4 (TerminalArrivee, Pipeline P1) — triggers cost calc ---
+    "C7": {
+        "type": "Pression",    "unit": "bar",
+        "normal_base": 48,     "daily_amplitude": 16,  "noise_std": 2,
+        "threshold": (10, 100)
+    },
+    "C8": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal_base": 260,    "daily_amplitude": 70,  "noise_std": 13,
+        "threshold": (50, 500)
+    },
+    "C9": {
+        "type": "Temperature", "unit": "°C",
+        "normal_base": 42,     "daily_amplitude": 12,  "noise_std": 2,
+        "threshold": (0, 90)
+    },
+    # --- Station S5 (TerminalDepart, Pipeline P2) ---
+    "C10": {
+        "type": "Pression",    "unit": "bar",
+        "normal_base": 45,     "daily_amplitude": 15,  "noise_std": 2,
+        "threshold": (10, 100)
+    },
+    "C11": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal_base": 220,    "daily_amplitude": 60,  "noise_std": 12,
+        "threshold": (50, 500)
+    },
+    # --- Station S6 (TerminalArrivee, Pipeline P2) — triggers cost calc ---
+    "C12": {
+        "type": "Pression",    "unit": "bar",
+        "normal_base": 40,     "daily_amplitude": 13,  "noise_std": 2,
+        "threshold": (10, 100)
+    },
+    "C13": {
+        "type": "Debit",       "unit": "m3/h",
+        "normal_base": 210,    "daily_amplitude": 55,  "noise_std": 11,
+        "threshold": (50, 500)
+    },
+    "C14": {
+        "type": "Temperature", "unit": "°C",
+        "normal_base": 38,     "daily_amplitude": 10,  "noise_std": 2,
+        "threshold": (0, 90)
     },
 }
 
@@ -116,6 +174,28 @@ def generate_maintenance_records(conn):
     else:
         print("  ℹ️  No maintenance records generated (not enough alerts)")
 
+# ─── Budget period check ───────────────────────────────────────────────────────
+def ensure_budget_periods(conn, start_time: datetime, end_time: datetime):
+    """Make sure a budget row exists for every month in the backfill range."""
+    periods = set()
+    current = start_time.replace(day=1)
+    while current <= end_time:
+        periods.add(current.strftime("%Y-%m"))
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+
+    with conn.cursor() as cur:
+        for periode in periods:
+            cur.execute("""
+                INSERT INTO budget (pipeline_id, periode, budget_alloue, cout_total)
+                VALUES ('P1', %s, 500000, 0), ('P2', %s, 300000, 0)
+                ON CONFLICT DO NOTHING
+            """, (periode, periode))
+    conn.commit()
+    print(f"  ✅ Budget periods ensured: {sorted(periods)}")
+
 # ─── Main backfill ─────────────────────────────────────────────────────────────
 def run_backfill(days: int = 30, interval_minutes: int = 5, dry_run: bool = False):
     now        = datetime.now().replace(second=0, microsecond=0)
@@ -141,6 +221,9 @@ def run_backfill(days: int = 30, interval_minutes: int = 5, dry_run: bool = Fals
     inserted, anomalies = 0, 0
 
     try:
+        print("\n🗓️  Ensuring budget periods exist...")
+        ensure_budget_periods(conn, start_time, now)
+
         BATCH_SIZE = 500
         batch = []
 
@@ -179,6 +262,19 @@ def run_backfill(days: int = 30, interval_minutes: int = 5, dry_run: bool = Fals
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM alerte")
             print(f"  🔴 Alerts generated   : {cur.fetchone()[0]:,}")
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*), COALESCE(SUM(cout), 0) FROM transaction_volume")
+            tx_count, total_cout = cur.fetchone()
+            print(f"  💰 Transactions       : {tx_count:,} (total cost: {total_cout:,.2f} DZD)")
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT pipeline_id, periode, cout_total, solde FROM budget ORDER BY pipeline_id, periode")
+            rows = cur.fetchall()
+            if rows:
+                print("\n  📊 Budget summary:")
+                for r in rows:
+                    print(f"     Pipeline {r[0]} | {r[1]} | spent: {r[2]:,.2f} | remaining: {r[3]:,.2f} DZD")
 
         print("\n🔧 Generating maintenance records...")
         generate_maintenance_records(conn)
