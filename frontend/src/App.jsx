@@ -17,22 +17,55 @@ const QUICK_CHIPS = [
   "Comment interpréter une alerte de pression ?",
 ];
 
+// ── SENSOR METADATA MAP ───────────────────────────────────────
+// Maps sensor IDs to pipeline, station location, and measure type
+const SENSOR_META = {
+  C1:  { pipeline: "P1", station: "Station Alger-Centre",  wilaya: "Alger (16)",         type: "Pression",    unit: "bar",  seuil: 5.0  },
+  C2:  { pipeline: "P1", station: "Station Blida",         wilaya: "Blida (09)",          type: "Température", unit: "°C",   seuil: 80   },
+  C3:  { pipeline: "P1", station: "Station Médéa",         wilaya: "Médéa (26)",          type: "Débit",       unit: "m³/h", seuil: 120  },
+  C4:  { pipeline: "P1", station: "Station Chlef",         wilaya: "Chlef (02)",          type: "Pression",    unit: "bar",  seuil: 5.0  },
+  C5:  { pipeline: "P1", station: "Station Relizane",      wilaya: "Relizane (48)",        type: "Température", unit: "°C",   seuil: 80   },
+  C6:  { pipeline: "P1", station: "Station Oran-Arrivée",  wilaya: "Oran (31)",           type: "Débit",       unit: "m³/h", seuil: 120  },
+  C7:  { pipeline: "P2", station: "Station Hassi Messaoud",wilaya: "Ouargla (30)",        type: "Pression",    unit: "bar",  seuil: 8.0  },
+  C8:  { pipeline: "P2", station: "Station Touggourt",     wilaya: "Touggourt (59)",       type: "Température", unit: "°C",   seuil: 95   },
+  C9:  { pipeline: "P2", station: "Station El Oued",       wilaya: "El Oued (39)",         type: "Débit",       unit: "m³/h", seuil: 200  },
+  C10: { pipeline: "P2", station: "Station Biskra",        wilaya: "Biskra (07)",          type: "Pression",    unit: "bar",  seuil: 8.0  },
+  C11: { pipeline: "P2", station: "Station Djelfa",        wilaya: "Djelfa (17)",          type: "Température", unit: "°C",   seuil: 95   },
+  C12: { pipeline: "P2", station: "Station Ouargla",       wilaya: "Ouargla (30)",        type: "Débit",       unit: "m³/h", seuil: 200  },
+};
+
+function getSensorMeta(capteurId) {
+  if (!capteurId) return null;
+  const key = capteurId.toString().toUpperCase().replace(/\s/g, "");
+  return SENSOR_META[key] || null;
+}
+
+function buildAlertMessage(a) {
+  const meta = getSensorMeta(a.capteur_id);
+  if (!meta) return a.message || "Seuil dépassé";
+  const val = Number(a.valeur);
+  const diff = Math.abs(val - meta.seuil).toFixed(2);
+  const direction = val > meta.seuil ? "au-dessus" : "en-dessous";
+  return `${meta.type} ${direction} du seuil (${meta.seuil} ${meta.unit}) — écart: ${diff} ${meta.unit}`;
+}
+
 // ── ICONS ────────────────────────────────────────────────────
 const Icon = ({ d, size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d={d} />
   </svg>
 );
-const ChatIcon   = () => <Icon d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />;
-const BellIcon   = () => <Icon d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />;
-const ChartIcon  = () => <Icon d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />;
-const CodeIcon   = () => <Icon d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />;
-const SendIcon   = () => <Icon d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />;
-const RefreshIcon= () => <Icon d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />;
-const DownloadIcon=() => <Icon d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />;
-const BulbIcon   = () => <Icon size={24} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />;
-const WarnIcon   = () => <Icon size={24} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />;
-const OkIcon     = () => <Icon d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />;
+const ChatIcon    = () => <Icon d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />;
+const BellIcon    = () => <Icon d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />;
+const ChartIcon   = () => <Icon d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />;
+const SendIcon    = () => <Icon d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />;
+const RefreshIcon = () => <Icon d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />;
+const DownloadIcon= () => <Icon d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />;
+const BulbIcon    = () => <Icon size={24} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />;
+const WarnIcon    = () => <Icon size={24} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />;
+const OkIcon      = () => <Icon d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />;
+const MapPinIcon  = () => <Icon size={12} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z" />;
+const PipeIcon    = () => <Icon size={12} d="M4 6h16M4 10h16M4 14h16M4 18h16" />;
 
 // ── STYLES ───────────────────────────────────────────────────
 const css = `
@@ -92,7 +125,12 @@ const css = `
   .pip-badge {
     margin-left:auto; background:var(--danger2); color:var(--danger);
     font-size:10px; font-family:var(--mono); padding:1px 6px; border-radius:10px; min-width:18px; text-align:center;
+    transition: all .3s;
   }
+  .pip-badge.updated {
+    animation: pip-badge-pop .4s ease;
+  }
+  @keyframes pip-badge-pop { 0%{transform:scale(1)} 50%{transform:scale(1.4)} 100%{transform:scale(1)} }
 
   /* MAIN */
   .pip-main { overflow:hidden; display:flex; flex-direction:column; }
@@ -161,25 +199,77 @@ const css = `
   .pip-refresh-btn { display:flex; align-items:center; gap:6px; padding:6px 12px; background:var(--bg3); border:1px solid var(--border2); border-radius:6px; color:var(--text2); font-size:12px; cursor:pointer; font-family:var(--font); transition:all .15s; }
   .pip-refresh-btn:hover { border-color:var(--accent); color:var(--accent); }
 
+  /* ALERT FILTERS */
+  .pip-filter-bar { display:flex; gap:6px; padding:12px 28px 0; flex-wrap:wrap; }
+  .pip-filter-btn { padding:4px 12px; border-radius:20px; font-size:11px; font-family:var(--mono); cursor:pointer; border:1px solid var(--border2); background:var(--bg3); color:var(--text2); transition:all .15s; }
+  .pip-filter-btn:hover { border-color:var(--border2); color:var(--text); }
+  .pip-filter-btn.active-all    { border-color:var(--text2); color:var(--text); background:rgba(255,255,255,.05); }
+  .pip-filter-btn.active-crit   { border-color:var(--danger); color:var(--danger); background:rgba(255,77,77,.07); }
+  .pip-filter-btn.active-p1     { border-color:var(--info); color:var(--info); background:rgba(59,130,246,.07); }
+  .pip-filter-btn.active-p2     { border-color:var(--warn); color:var(--warn); background:rgba(245,158,11,.07); }
+  .pip-filter-btn.active-warn   { border-color:#f59e0b; color:#f59e0b; background:rgba(245,158,11,.07); }
+
   /* ALERTS */
-  .pip-alerts-list { flex:1; overflow-y:auto; padding:16px 28px; display:flex; flex-direction:column; gap:8px; }
+  .pip-alerts-list { flex:1; overflow-y:auto; padding:12px 28px; display:flex; flex-direction:column; gap:8px; }
   .pip-alerts-list::-webkit-scrollbar { width:4px; }
   .pip-alerts-list::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
-  .pip-alert-item { display:grid; grid-template-columns:8px 1fr auto; gap:12px; align-items:start; padding:12px 14px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; transition:border-color .15s; }
+
+  .pip-alert-item {
+    display:grid; grid-template-columns:8px 1fr auto; gap:12px; align-items:start;
+    padding:12px 14px; background:var(--bg3); border:1px solid var(--border);
+    border-radius:8px; transition:border-color .15s;
+    animation: pip-alertin .25s ease;
+  }
+  @keyframes pip-alertin { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
   .pip-alert-item:hover { border-color:var(--border2); }
-  .pip-alert-item.critique { border-left:2px solid var(--danger); }
-  .pip-alert-item.resolue  { border-left:2px solid var(--accent); opacity:.6; }
-  .pip-adot { width:8px; height:8px; border-radius:50%; margin-top:4px; }
-  .pip-adot.critique { background:var(--danger); box-shadow:0 0 6px rgba(255,77,77,.4); }
-  .pip-adot.resolue  { background:var(--accent); }
-  .pip-abody { display:flex; flex-direction:column; gap:3px; }
-  .pip-atop  { display:flex; align-items:center; gap:8px; }
+  .pip-alert-item.critique      { border-left:2px solid var(--danger); }
+  .pip-alert-item.resolue       { border-left:2px solid var(--accent); opacity:.6; }
+  .pip-alert-item.avertissement { border-left:2px solid var(--warn); }
+  .pip-adot { width:8px; height:8px; border-radius:50%; margin-top:5px; flex-shrink:0; }
+  .pip-adot.critique      { background:var(--danger); box-shadow:0 0 6px rgba(255,77,77,.4); }
+  .pip-adot.resolue       { background:var(--accent); }
+  .pip-adot.avertissement { background:var(--warn); box-shadow:0 0 6px rgba(245,158,11,.4); animation:pip-warn-pulse 2s infinite; }
+  @keyframes pip-warn-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .pip-abody { display:flex; flex-direction:column; gap:4px; }
+  .pip-atop  { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .pip-asensor { font-family:var(--mono); font-size:12px; color:var(--accent); background:rgba(0,200,150,.08); padding:1px 6px; border-radius:4px; }
   .pip-atype { font-size:11px; color:var(--danger); font-weight:500; text-transform:uppercase; letter-spacing:.05em; }
-  .pip-atype.resolue { color:var(--accent); }
-  .pip-amsg  { font-size:13px; color:var(--text2); }
-  .pip-aval  { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--text); }
+  .pip-atype.resolue       { color:var(--accent); }
+  .pip-atype.avertissement { color:var(--warn); }
+  /* NEW: location & pipeline tags */
+  .pip-ameta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:1px; }
+  .pip-aloc {
+    display:flex; align-items:center; gap:3px;
+    font-size:11px; color:var(--text2);
+  }
+  .pip-aloc svg { flex-shrink:0; }
+  .pip-apipeline {
+    display:inline-flex; align-items:center; gap:3px;
+    font-size:10px; font-family:var(--mono);
+    padding:1px 6px; border-radius:3px; font-weight:500;
+  }
+  .pip-apipeline.P1 { color:var(--info); background:rgba(59,130,246,.1); border:1px solid rgba(59,130,246,.2); }
+  .pip-apipeline.P2 { color:var(--warn); background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.2); }
+  .pip-ameastype {
+    font-size:10px; font-family:var(--mono); color:var(--text3);
+    padding:1px 6px; border-radius:3px; background:var(--bg2); border:1px solid var(--border);
+  }
+  .pip-amsg  { font-size:12px; color:var(--text2); line-height:1.5; }
+  .pip-aval-block { display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+  .pip-aval  { font-family:var(--mono); font-size:14px; font-weight:500; color:var(--text); }
+  .pip-aunit { font-size:10px; color:var(--text3); font-family:var(--mono); }
   .pip-atime { font-size:11px; color:var(--text3); }
+
+  /* ALERT STATS BAR */
+  .pip-alert-stats { display:flex; gap:16px; padding:10px 28px 0; }
+  .pip-astat { display:flex; flex-direction:column; gap:1px; }
+  .pip-astat-val { font-family:var(--mono); font-size:18px; font-weight:500; color:var(--text); }
+  .pip-astat-val.red { color:var(--danger); }
+  .pip-astat-val.green { color:var(--accent); }
+  .pip-astat-val.blue { color:var(--info); }
+  .pip-astat-val.amber { color:var(--warn); }
+  .pip-astat-lbl { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:.08em; }
+  .pip-astat-sep { width:1px; background:var(--border); align-self:stretch; margin:0 4px; }
 
   /* BUDGET */
   .pip-budget-body { flex:1; overflow-y:auto; padding:16px 28px 28px; display:flex; flex-direction:column; gap:20px; }
@@ -210,13 +300,24 @@ const css = `
   .pip-panel-list { flex:1; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:6px; }
   .pip-panel-list::-webkit-scrollbar { width:3px; }
   .pip-panel-list::-webkit-scrollbar-thumb { background:var(--border); }
-  .pip-palert { padding:8px 10px; background:var(--bg3); border:1px solid var(--border); border-left:2px solid var(--danger); border-radius:6px; font-size:12px; animation:pip-slidein .3s ease; }
+
+  .pip-palert               { padding:9px 10px; background:var(--bg3); border:1px solid var(--border); border-left:2px solid var(--danger); border-radius:6px; font-size:12px; animation:pip-slidein .3s ease; }
+  .pip-palert.avertissement { border-left:2px solid var(--warn); }
+  .pip-palert.resolue       { border-left:2px solid var(--accent); opacity:.7; }
   @keyframes pip-slidein { from{opacity:0;transform:translateX(8px)} to{opacity:1;transform:translateX(0)} }
-  .pip-palert-top { display:flex; justify-content:space-between; margin-bottom:2px; }
+  .pip-palert-top { display:flex; justify-content:space-between; margin-bottom:3px; }
   .pip-palert-sensor { font-family:var(--mono); font-size:11px; color:var(--accent); }
   .pip-palert-time   { font-size:10px; color:var(--text3); }
-  .pip-palert-msg    { color:var(--text2); font-size:11px; }
+  .pip-palert-loc  { font-size:10px; color:var(--text3); margin-bottom:2px; display:flex; align-items:center; gap:3px; }
+  .pip-palert-msg    { color:var(--text2); font-size:11px; margin-bottom:2px; }
   .pip-palert-val    { font-family:var(--mono); font-weight:500; color:var(--danger); font-size:11px; }
+  .pip-palert-tags { display:flex; gap:4px; margin-top:4px; }
+  .pip-ptag {
+    font-size:9px; font-family:var(--mono); padding:1px 5px; border-radius:3px;
+  }
+  .pip-ptag.P1 { color:var(--info); background:rgba(59,130,246,.12); }
+  .pip-ptag.P2 { color:var(--warn); background:rgba(245,158,11,.12); }
+  .pip-ptag.type { color:var(--text3); background:var(--bg2); }
 
   /* EMPTY STATE */
   .pip-empty { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:var(--text3); font-size:12px; padding:20px; text-align:center; }
@@ -241,10 +342,12 @@ export default function PipelineDashboard() {
   const [input, setInput]         = useState("");
   const [streaming, setStreaming] = useState(false);
   const [alerts, setAlerts]       = useState([]);
+  const [alertFilter, setAlertFilter] = useState("all"); // "all" | "critique" | "P1" | "P2"
   const [budget, setBudget]       = useState(null);
   const [panelAlerts, setPanelAlerts] = useState([]);
-  const [seenIds, setSeenIds]     = useState(new Set());
-  const [critCount, setCritCount] = useState(0);
+  // counts derived from full API fetch — not capped at poll limit
+  const [totalAlertCount, setTotalAlertCount] = useState(0);
+  const [critAlertCount,  setCritAlertCount]  = useState(0);
   const [apiUrl, setApiUrl]       = useState("http://localhost:8000");
   const [connResult, setConnResult] = useState("");
   const [copyMsg, setCopyMsg]     = useState(false);
@@ -254,7 +357,6 @@ export default function PipelineDashboard() {
   const apiUrlRef = useRef(apiUrl);
   apiUrlRef.current = apiUrl;
 
-  // inject CSS once
   useEffect(() => {
     if (!document.getElementById("pip-styles")) {
       const s = document.createElement("style");
@@ -264,35 +366,47 @@ export default function PipelineDashboard() {
     }
   }, []);
 
-  // live poll
+  // live poll — update BOTH total and crit counts from the same response
   useEffect(() => {
     pollPanel();
     const id = setInterval(pollPanel, 10000);
     return () => clearInterval(id);
   }, []);
 
-  // scroll to bottom on new message
   useEffect(() => {
     if (msgsRef.current) msgsRef.current.scrollTop = msgsRef.current.scrollHeight;
   }, [messages]);
 
-  // load data when switching pages
   useEffect(() => {
-    if (page === "alerts") loadAlerts();
+    if (page === "alerts") {
+      loadAlerts();
+      const id = setInterval(loadAlerts, 10000);
+      return () => clearInterval(id);
+    }
     if (page === "budget") loadBudget();
   }, [page]);
 
   // ── API HELPERS ─────────────────────────────────────────────
   async function pollPanel() {
     try {
-      const r = await fetch(`${apiUrlRef.current}/alerts/recent?limit=20`);
-      const data = await r.json();
-      const critiques = data.filter(a => a.type_alerte === "Critique");
-      setCritCount(critiques.length);
+      // Fetch recent 20 for the live panel display
+      const panelReq = fetch(`${apiUrlRef.current}/alerts/recent?limit=20`);
+      // Fetch a large batch just to get accurate counts (no display needed)
+      const countReq = fetch(`${apiUrlRef.current}/alerts/recent?limit=10000`);
 
+      const [panelRes, countRes] = await Promise.all([panelReq, countReq]);
+      const panelData = await panelRes.json();
+      const countData = await countRes.json();
+
+      // Counts come from the full dataset
+      const critiques = countData.filter(a => a.type_alerte === "Critique");
+      setTotalAlertCount(countData.length);
+      setCritAlertCount(critiques.length);
+
+      // Live panel uses only the 20 most recent
       setPanelAlerts(prev => {
         const ids = new Set(prev.map(a => a.alerte_id));
-        const fresh = data.filter(a => !ids.has(a.alerte_id));
+        const fresh = panelData.filter(a => !ids.has(a.alerte_id));
         if (!fresh.length) return prev;
         return [...fresh, ...prev].slice(0, 30);
       });
@@ -301,8 +415,12 @@ export default function PipelineDashboard() {
 
   async function loadAlerts() {
     try {
-      const r = await fetch(`${apiUrl}/alerts/recent?limit=100`);
-      setAlerts(await r.json());
+      // Fetch all alerts without an arbitrary cap
+      const r = await fetch(`${apiUrl}/alerts/recent?limit=10000`);
+      const data = await r.json();
+      setAlerts(data);
+      setTotalAlertCount(data.length);
+      setCritAlertCount(data.filter(a => a.type_alerte === "Critique").length);
     } catch { setAlerts(null); }
   }
 
@@ -382,7 +500,6 @@ export default function PipelineDashboard() {
     a.click();
   }
 
-  // ── TEST CONNECTION ──────────────────────────────────────────
   async function testConnection() {
     setConnResult("Test en cours...");
     try {
@@ -394,49 +511,27 @@ export default function PipelineDashboard() {
     }
   }
 
-  // ── ENDPOINTS CODE ───────────────────────────────────────────
-  const endpointsCode = `# Add these routes to api/main.py
-from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-@app.get("/alerts/recent")
-def get_recent_alerts(limit: int = 50):
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM alerte ORDER BY timestamp DESC LIMIT %s", (limit,))
-        cols = [d[0] for d in cur.description]
-        rows = [dict(zip(cols,r)) for r in cur.fetchall()]
-    conn.close()
-    for r in rows: r['timestamp'] = r['timestamp'].isoformat()
-    return rows
-
-@app.get("/budget/summary")
-def get_budget_summary():
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM budget ORDER BY pipeline_id, periode")
-        cols=[d[0] for d in cur.description]
-        rows=[dict(zip(cols,r)) for r in cur.fetchall()]
-    conn.close()
-    return rows
-
-@app.get("/budget/transactions")
-def get_transactions(limit: int = 200):
-    conn = get_db()
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM transaction_volume ORDER BY timestamp DESC LIMIT %s", (limit,))
-        cols=[d[0] for d in cur.description]
-        rows=[dict(zip(cols,r)) for r in cur.fetchall()]
-    conn.close()
-    for r in rows: r['timestamp'] = r['timestamp'].isoformat()
-    return rows
-
-@app.get("/health")
-def health(): return {"status": "ok"}`;
-
   // ── RENDER HELPERS ───────────────────────────────────────────
-  const fmtTs = ts => new Date(ts).toLocaleString("fr");
+  const fmtTs   = ts => new Date(ts).toLocaleString("fr");
   const fmtTime = ts => new Date(ts).toLocaleTimeString("fr");
+
+  // filtered alerts for the main list
+  const filteredAlerts = Array.isArray(alerts) ? alerts.filter(a => {
+    if (alertFilter === "critique")      return (a.type_alerte || "").toLowerCase() === "critique";
+    if (alertFilter === "avertissement") return (a.type_alerte || "").toLowerCase() === "avertissement";
+    if (alertFilter === "P1" || alertFilter === "P2") {
+      const meta = getSensorMeta(a.capteur_id);
+      return meta?.pipeline === alertFilter;
+    }
+    return true;
+  }) : [];
+
+  // stats for the stats bar
+  const critCount          = Array.isArray(alerts) ? alerts.filter(a => (a.type_alerte||"").toLowerCase() === "critique").length : 0;
+  const avertCount         = Array.isArray(alerts) ? alerts.filter(a => (a.type_alerte||"").toLowerCase() === "avertissement").length : 0;
+  const resolueCount       = Array.isArray(alerts) ? alerts.filter(a => (a.type_alerte||"").toLowerCase() === "resolue").length : 0;
+  const p1Count            = Array.isArray(alerts) ? alerts.filter(a => getSensorMeta(a.capteur_id)?.pipeline === "P1").length : 0;
+  const p2Count            = Array.isArray(alerts) ? alerts.filter(a => getSensorMeta(a.capteur_id)?.pipeline === "P2").length : 0;
 
   function BudgetView() {
     if (!budget) return (
@@ -451,17 +546,16 @@ def health(): return {"status": "ok"}`;
     const totalSolde   = totalAlloue - totalDepense;
     const pct = totalAlloue > 0 ? (totalDepense / totalAlloue * 100) : 0;
     const fillCls = pct > 90 ? "danger" : pct > 70 ? "warn" : "";
-
     return (
       <>
         <div>
           <div className="pip-section-title">Vue globale</div>
           <div className="pip-cards">
             {[
-              { label: "Budget total",   val: `${(totalAlloue/1000).toFixed(0)}k DZD`, cls: "" },
-              { label: "Dépensé",        val: `${(totalDepense/1000).toFixed(1)}k DZD`, cls: "amber" },
-              { label: "Solde",          val: `${(totalSolde/1000).toFixed(1)}k DZD`, cls: totalSolde < 0 ? "red" : "green" },
-              { label: "Transactions",   val: transactions.length, cls: "" },
+              { label: "Budget total",  val: `${(totalAlloue/1000).toFixed(0)}k DZD`,  cls: "" },
+              { label: "Dépensé",       val: `${(totalDepense/1000).toFixed(1)}k DZD`, cls: "amber" },
+              { label: "Solde",         val: `${(totalSolde/1000).toFixed(1)}k DZD`,   cls: totalSolde < 0 ? "red" : "green" },
+              { label: "Transactions",  val: transactions.length, cls: "" },
             ].map(c => (
               <div className="pip-card" key={c.label}>
                 <div className="pip-card-label">{c.label}</div>
@@ -486,14 +580,13 @@ def health(): return {"status": "ok"}`;
                 const fc = p > 90 ? "danger" : p > 70 ? "warn" : "";
                 return (
                   <tr key={i}>
-                    <td>{r.pipeline_id}</td>
-                    <td>{r.periode}</td>
+                    <td>{r.pipeline_id}</td><td>{r.periode}</td>
                     <td>{Number(r.budget_alloue).toLocaleString("fr")}</td>
                     <td>{Number(r.cout_total).toLocaleString("fr")}</td>
                     <td style={{ color: r.solde < 0 ? "var(--danger)" : "var(--accent)" }}>{Number(r.solde).toLocaleString("fr")}</td>
                     <td>
                       <div>{p.toFixed(1)}%</div>
-                      <div className="pip-bar"><div className={`pip-bar-fill ${fc}`} style={{ width: `${Math.min(p, 100)}%` }} /></div>
+                      <div className="pip-bar"><div className={`pip-bar-fill ${fc}`} style={{ width: `${Math.min(p,100)}%` }} /></div>
                     </td>
                   </tr>
                 );
@@ -508,8 +601,7 @@ def health(): return {"status": "ok"}`;
             <tbody>
               {transactions.slice(0, 50).map((t, i) => (
                 <tr key={i}>
-                  <td>{t.station_id}</td>
-                  <td>{t.type_mesure}</td>
+                  <td>{t.station_id}</td><td>{t.type_mesure}</td>
                   <td>{Number(t.valeur).toFixed(2)}</td>
                   <td style={{ color: "var(--warn)" }}>{Number(t.cout).toFixed(2)}</td>
                   <td>{fmtTs(t.timestamp)}</td>
@@ -535,7 +627,8 @@ def health(): return {"status": "ok"}`;
           <div className="pip-dot" />
           <span>simulator running</span>
           <div className="pip-divider" />
-          <span style={{ fontFamily: "var(--mono)" }}>{critCount} alertes critiques</span>
+          {/* FIXED: show real crit count from state */}
+          <span style={{ fontFamily: "var(--mono)" }}>{critAlertCount} alertes critiques</span>
         </div>
       </header>
 
@@ -543,16 +636,18 @@ def health(): return {"status": "ok"}`;
       <nav className="pip-nav">
         <div className="pip-nav-label">Navigation</div>
         {[
-          { id: "chat",    label: "Assistant IA",   icon: <ChatIcon /> },
-          { id: "alerts",  label: "Alertes",        icon: <BellIcon />, badge: critCount },
-          { id: "budget",  label: "Budget & Coûts", icon: <ChartIcon /> },
+          { id: "chat",   label: "Assistant IA",   icon: <ChatIcon /> },
+          // FIXED: badge shows real total count, not hardcoded
+          { id: "alerts", label: "Alertes",        icon: <BellIcon />, badge: totalAlertCount },
+          { id: "budget", label: "Budget & Coûts", icon: <ChartIcon /> },
         ].map(n => (
           <button key={n.id} className={`pip-nav-btn ${page === n.id ? "active" : ""}`} onClick={() => setPage(n.id)}>
             {n.icon} {n.label}
-            {n.badge !== undefined && <span className="pip-badge">{n.badge}</span>}
+            {n.badge !== undefined && n.badge > 0 && (
+              <span className="pip-badge">{n.badge}</span>
+            )}
           </button>
         ))}
-
       </nav>
 
       {/* MAIN */}
@@ -611,23 +706,84 @@ def health(): return {"status": "ok"}`;
               <div className="pip-page-sub">
                 {alerts === null
                   ? "Erreur de chargement"
-                  : alerts.length
+                  : Array.isArray(alerts) && alerts.length
                     ? `${alerts.length} alertes — màj ${new Date().toLocaleTimeString("fr")}`
                     : "Chargement..."}
               </div>
             </div>
             <button className="pip-refresh-btn" onClick={loadAlerts}><RefreshIcon /> Actualiser</button>
           </div>
+
+          {/* Stats bar */}
+          {Array.isArray(alerts) && alerts.length > 0 && (
+            <div className="pip-alert-stats">
+              <div className="pip-astat">
+                <div className="pip-astat-val">{alerts.length}</div>
+                <div className="pip-astat-lbl">Total</div>
+              </div>
+              <div className="pip-astat-sep" />
+              <div className="pip-astat">
+                <div className="pip-astat-val red">{critCount}</div>
+                <div className="pip-astat-lbl">Critiques</div>
+              </div>
+              <div className="pip-astat-sep" />
+              <div className="pip-astat">
+                <div className="pip-astat-val amber">{avertCount}</div>
+                <div className="pip-astat-lbl">Avert.</div>
+              </div>
+              <div className="pip-astat-sep" />
+              <div className="pip-astat">
+                <div className="pip-astat-val green">{resolueCount}</div>
+                <div className="pip-astat-lbl">Résolues</div>
+              </div>
+              <div className="pip-astat-sep" />
+              <div className="pip-astat">
+                <div className="pip-astat-val blue">{p1Count}</div>
+                <div className="pip-astat-lbl">Pipeline P1</div>
+              </div>
+              <div className="pip-astat-sep" />
+              <div className="pip-astat">
+                <div className="pip-astat-val amber">{p2Count}</div>
+                <div className="pip-astat-lbl">Pipeline P2</div>
+              </div>
+            </div>
+          )}
+
+          {/* Filter bar */}
+          {Array.isArray(alerts) && alerts.length > 0 && (
+            <div className="pip-filter-bar">
+              {[
+                { id: "all",            label: `Toutes (${alerts.length})`,       cls: "active-all"  },
+                { id: "critique",       label: `Critiques (${critCount})`,         cls: "active-crit" },
+                { id: "avertissement",  label: `Avertissements (${avertCount})`,   cls: "active-warn" },
+                { id: "P1",             label: `P1 – Alger→Oran (${p1Count})`,    cls: "active-p1"   },
+                { id: "P2",             label: `P2 – HM→Ouargla (${p2Count})`,    cls: "active-p2"   },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  className={`pip-filter-btn ${alertFilter === f.id ? f.cls : ""}`}
+                  onClick={() => setAlertFilter(f.id)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="pip-alerts-list">
             {alerts === null ? (
               <div className="pip-empty" style={{ color: "var(--danger)" }}>
                 <WarnIcon />
                 Impossible de charger. Vérifiez l'API sur {apiUrl}
               </div>
-            ) : alerts.length === 0 ? (
+            ) : !Array.isArray(alerts) || alerts.length === 0 ? (
               <div className="pip-empty"><OkIcon /> Aucune alerte</div>
-            ) : alerts.map((a, i) => {
+            ) : filteredAlerts.length === 0 ? (
+              <div className="pip-empty"><OkIcon /> Aucune alerte dans cette catégorie</div>
+            ) : filteredAlerts.map((a, i) => {
               const cls = (a.type_alerte || "").toLowerCase();
+              const meta = getSensorMeta(a.capteur_id);
+              const val = Number(a.valeur);
               return (
                 <div key={i} className={`pip-alert-item ${cls}`}>
                   <div className={`pip-adot ${cls}`} />
@@ -636,10 +792,24 @@ def health(): return {"status": "ok"}`;
                       <span className="pip-asensor">{a.capteur_id}</span>
                       <span className={`pip-atype ${cls}`}>{a.type_alerte}</span>
                     </div>
-                    <div className="pip-amsg">{a.message || "Seuil dépassé"}</div>
+                    {meta && (
+                      <div className="pip-ameta">
+                        <span className={`pip-apipeline ${meta.pipeline}`}>
+                          <PipeIcon /> {meta.pipeline}
+                        </span>
+                        <span className="pip-aloc">
+                          <MapPinIcon /> {meta.station}
+                        </span>
+                        <span className="pip-ameastype">{meta.type}</span>
+                      </div>
+                    )}
+                    <div className="pip-amsg">{buildAlertMessage(a)}</div>
                     <div className="pip-atime">{fmtTs(a.timestamp)}</div>
                   </div>
-                  <div className="pip-aval">{Number(a.valeur).toFixed(2)}</div>
+                  <div className="pip-aval-block">
+                    <div className="pip-aval">{isNaN(val) ? "—" : val.toFixed(2)}</div>
+                    {meta && <div className="pip-aunit">{meta.unit}</div>}
+                  </div>
                 </div>
               );
             })}
@@ -665,46 +835,6 @@ def health(): return {"status": "ok"}`;
           </div>
         </div>
 
-        {/* CONFIG PAGE */}
-        <div className={`pip-page ${page === "config" ? "active" : ""}`} style={{ overflowY: "auto" }}>
-          <div className="pip-config">
-            <div>
-              <div className="pip-page-title" style={{ marginBottom: 6 }}>Configuration</div>
-              <div className="pip-page-sub">Connexion backend FastAPI</div>
-            </div>
-            <div className="pip-config-card">
-              <div className="pip-section-title">Backend FastAPI</div>
-              <div>
-                <div className="pip-label">URL du backend</div>
-                <input className="pip-text-input" value={apiUrl} onChange={e => setApiUrl(e.target.value)} />
-              </div>
-              <button className="pip-btn-sm" onClick={testConnection}>Tester la connexion</button>
-              {connResult && (
-                <div style={{ fontSize: 12, fontFamily: "var(--mono)", color: connResult.startsWith("✓") ? "var(--accent)" : "var(--danger)" }}>
-                  {connResult}
-                </div>
-              )}
-            </div>
-            <div className="pip-config-card">
-              <div className="pip-section-title">Endpoints requis dans main.py</div>
-              <div className="pip-code-block">
-                GET /alerts/recent?limit=50<br />
-                GET /budget/summary<br />
-                GET /budget/transactions?limit=200<br />
-                GET /health
-              </div>
-              <button className="pip-btn-accent" onClick={() => {
-                navigator.clipboard.writeText(endpointsCode);
-                setCopyMsg(true);
-                setTimeout(() => setCopyMsg(false), 3000);
-              }}>
-                Copier le code des endpoints
-              </button>
-              {copyMsg && <div style={{ fontSize: 11, color: "var(--accent)" }}>✓ Copié dans le presse-papiers</div>}
-            </div>
-          </div>
-        </div>
-
       </main>
 
       {/* RIGHT PANEL */}
@@ -716,16 +846,22 @@ def health(): return {"status": "ok"}`;
         <div className="pip-panel-list">
           {panelAlerts.length === 0 ? (
             <div className="pip-empty"><OkIcon />En attente d'alertes...</div>
-          ) : panelAlerts.map((a, i) => (
-            <div key={a.alerte_id || i} className="pip-palert">
-              <div className="pip-palert-top">
-                <span className="pip-palert-sensor">{a.capteur_id}</span>
-                <span className="pip-palert-time">{fmtTime(a.timestamp)}</span>
+          ) : panelAlerts.map((a, i) => {
+            const meta = getSensorMeta(a.capteur_id);
+            const val = Number(a.valeur);
+            return (
+              <div key={a.alerte_id || i} className={`pip-palert ${(a.type_alerte||"").toLowerCase()}`}>
+                <div className="pip-palert-top">
+                  <span className="pip-palert-sensor">{a.capteur_id}</span>
+                  <span className="pip-palert-time">{fmtTime(a.timestamp)}</span>
+                </div>
+                <div className="pip-palert-msg">{a.type_alerte === "Avertissement" ? "Valeur proche du seuil" : "Seuil dépassé"}</div>
+                <div className="pip-palert-val">
+                  val: {isNaN(val) ? "—" : val.toFixed(2)}{meta ? ` ${meta.unit}` : ""}
+                </div>
               </div>
-              <div className="pip-palert-msg">{a.message || "Seuil dépassé"}</div>
-              <div className="pip-palert-val">val: {Number(a.valeur).toFixed(2)}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </aside>
 

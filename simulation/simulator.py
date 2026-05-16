@@ -32,8 +32,11 @@ def get_connection():
     )
 
 # ─── Sensor Configuration ─────────────────────────────────────────────────────
-# C1, C2, C3,  — existing machines M1/M2 (Pompage/Compression stations)
-# C5–C10          — new machines M3–M6 on terminal stations S3–S6
+# C1, C2, C3  — existing machines M1/M2 (Pompage/Compression stations)
+# C5–C14      — new machines M3–M6 on terminal stations S3–S6
+#
+# WARNING_PCT = 10 % proximity band applied inside the [lo, hi] normal range.
+# A warning value lands in  [lo, lo + 10%·range]  or  [hi - 10%·range, hi].
 
 SENSORS = {
     # --- Station S1 (Pompage, Pipeline P1) ---
@@ -109,15 +112,38 @@ SENSORS = {
     },
 }
 
+# Warning band: 10 % of the normal range near each boundary
+WARNING_PCT = 0.10
+
+
 # ─── Value generators ─────────────────────────────────────────────────────────
 def normal_value(sensor_id: str) -> float:
+    """Random value well inside the normal operating band."""
     lo, hi = SENSORS[sensor_id]["normal"]
     mid = (lo + hi) / 2
     std = (hi - lo) / 6
     value = random.gauss(mid, std)
     return round(max(lo, min(hi, value)), 3)
 
+
+def warning_value(sensor_id: str, direction: str = "high") -> float:
+    """
+    Value that is inside the normal [lo, hi] band but within the 10 % warning
+    margin near one of the boundaries — enough to trigger the DB's Avertissement
+    logic after WARNING_N consecutive readings.
+    """
+    lo, hi = SENSORS[sensor_id]["normal"]
+    margin = (hi - lo) * WARNING_PCT
+    if direction == "low":
+        # Near the lower boundary: [lo, lo + margin]
+        return round(random.uniform(lo, lo + margin), 3)
+    else:
+        # Near the upper boundary: [hi - margin, hi]
+        return round(random.uniform(hi - margin, hi), 3)
+
+
 def anomaly_value(sensor_id: str, direction: str = "high") -> float:
+    """Value that crosses the threshold — triggers a Critique alert."""
     cfg = SENSORS[sensor_id]
     if direction == "low":
         base = cfg["anomaly_low"]
@@ -125,6 +151,7 @@ def anomaly_value(sensor_id: str, direction: str = "high") -> float:
     else:
         base = cfg["anomaly_high"]
         return round(base + random.uniform(0, base * 0.1), 3)
+
 
 # ─── Insert logic ─────────────────────────────────────────────────────────────
 def insert_mesure(conn, capteur_id: str, valeur: float):
@@ -137,6 +164,7 @@ def insert_mesure(conn, capteur_id: str, valeur: float):
     conn.commit()
     return ts
 
+
 def check_last_alerts(conn, limit: int = 5):
     with conn.cursor() as cur:
         cur.execute("""
@@ -146,6 +174,7 @@ def check_last_alerts(conn, limit: int = 5):
             LIMIT %s
         """, (limit,))
         return cur.fetchall()
+
 
 def check_last_transactions(conn, limit: int = 3):
     with conn.cursor() as cur:
@@ -157,10 +186,14 @@ def check_last_transactions(conn, limit: int = 3):
         """, (limit,))
         return cur.fetchall()
 
+
 # ─── Main simulation loop ──────────────────────────────────────────────────────
 def run_simulator(interval: int = 5, force_anomaly: bool = False):
     interval      = int(os.getenv("SIM_INTERVAL", interval))
-    force_anomaly = os.getenv("SIM_FORCE_ANOMALY", str(force_anomaly)).lower() == "true" or force_anomaly
+    force_anomaly = (
+        os.getenv("SIM_FORCE_ANOMALY", str(force_anomaly)).lower() == "true"
+        or force_anomaly
+    )
 
     print("🚀 Pipeline Sensor Simulator started")
     print(f"   Interval : {interval}s | Forced anomalies: {force_anomaly}")
@@ -168,7 +201,12 @@ def run_simulator(interval: int = 5, force_anomaly: bool = False):
     print("─" * 60)
 
     conn = get_connection()
-    cycle, anomaly_count, total_inserts = 0, 0, 0
+    cycle, anomaly_count, warning_count, total_inserts = 0, 0, 0, 0
+
+    # Per-sensor consecutive warning counter — mirrors the DB's WARNING_N = 3 logic
+    # so the simulator can emit 3 warning readings in a row to guarantee a DB alert.
+    warning_streak: dict[str, int] = {sid: 0 for sid in SENSORS}
+    WARNING_N = 3  # must match check_seuil() in pipeline_db.sql
 
     try:
         while True:
@@ -176,17 +214,40 @@ def run_simulator(interval: int = 5, force_anomaly: bool = False):
             readings = []
 
             for capteur_id in SENSORS:
-                inject = (force_anomaly and cycle % 10 == 0) or \
-                         (not force_anomaly and random.random() < 0.05)
+                # --- Decide reading type for this cycle ---
+                roll = random.random()
 
-                if inject:
+                if force_anomaly and cycle % 10 == 0:
+                    # Forced anomaly every 10 cycles
                     direction = random.choice(["high", "low"])
                     value = anomaly_value(capteur_id, direction)
-                    tag = "⚠️  ANOMALY"
+                    tag = "⚠️  ANOMALY "
                     anomaly_count += 1
+                    warning_streak[capteur_id] = 0
+
+                elif not force_anomaly and roll < 0.05:
+                    # ~5 % chance of a full Critique anomaly
+                    direction = random.choice(["high", "low"])
+                    value = anomaly_value(capteur_id, direction)
+                    tag = "⚠️  ANOMALY "
+                    anomaly_count += 1
+                    warning_streak[capteur_id] = 0
+
+                elif not force_anomaly and roll < 0.20:
+                    # ~15 % chance of a warning-zone reading (5–20 % band)
+                    # We keep injecting until we've sent WARNING_N in a row,
+                    # which is what the DB trigger needs to fire Avertissement.
+                    direction = random.choice(["high", "low"])
+                    value = warning_value(capteur_id, direction)
+                    warning_streak[capteur_id] += 1
+                    tag = f"🟡 WARNING  ({warning_streak[capteur_id]}/{WARNING_N})"
+                    if warning_streak[capteur_id] >= WARNING_N:
+                        warning_count += 1
+                        warning_streak[capteur_id] = 0  # reset after trigger
                 else:
                     value = normal_value(capteur_id)
-                    tag = "   normal "
+                    tag = "   normal  "
+                    warning_streak[capteur_id] = 0
 
                 insert_mesure(conn, capteur_id, value)
                 total_inserts += 1
@@ -204,7 +265,13 @@ def run_simulator(interval: int = 5, force_anomaly: bool = False):
                 if alerts:
                     print(f"\n🔴 Last alerts ({len(alerts)} shown):")
                     for a in alerts:
-                        print(f"   alerte_id={a[0]} | {a[1]} | val={a[2]} | {a[4]} | {a[5]}")
+                        type_label = a[4] or "?"
+                        icon = "🟡" if type_label == "Avertissement" else (
+                               "✅" if type_label == "Resolue" else "🔴")
+                        print(
+                            f"   {icon} alerte_id={a[0]} | {a[1]} | "
+                            f"val={a[2]} | {type_label} | {a[5]}"
+                        )
                 else:
                     print("\n✅ No alerts yet.")
 
@@ -212,14 +279,24 @@ def run_simulator(interval: int = 5, force_anomaly: bool = False):
                 if transactions:
                     print(f"\n💰 Last cost transactions ({len(transactions)} shown):")
                     for t in transactions:
-                        print(f"   tx_id={t[0]} | station={t[1]} | {t[2]} | val={t[3]} | cout={t[4]:.2f} DZD")
+                        print(
+                            f"   tx_id={t[0]} | station={t[1]} | {t[2]} | "
+                            f"val={t[3]} | cout={t[4]:.2f} DZD"
+                        )
 
-            print(f"   Total inserts: {total_inserts} | Anomalies: {anomaly_count}")
+            print(
+                f"   Total inserts: {total_inserts} | "
+                f"Critiques: {anomaly_count} | "
+                f"Avertissements déclenchés: {warning_count}"
+            )
             time.sleep(interval)
 
     except KeyboardInterrupt:
         print("\n\n⛔ Simulator stopped.")
-        print(f"   Cycles: {cycle} | Inserts: {total_inserts} | Anomalies: {anomaly_count}")
+        print(
+            f"   Cycles: {cycle} | Inserts: {total_inserts} | "
+            f"Critiques: {anomaly_count} | Avertissements: {warning_count}"
+        )
     finally:
         conn.close()
 

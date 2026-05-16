@@ -29,8 +29,8 @@ def get_connection():
     )
 
 # ─── Sensor Configuration ──────────────────────────────────────────────────────
-# C1, C2, C3,  — existing machines M1/M2 (Pompage/Compression stations)
-# C5–C14          — new machines on terminal stations S3–S6
+# C1, C2, C3   — existing machines M1/M2 (Pompage/Compression stations)
+# C5–C14       — new machines on terminal stations S3–S6
 SENSORS = {
     # --- Station S1 (Pompage, Pipeline P1) ---
     "C1": {
@@ -105,40 +105,104 @@ SENSORS = {
     },
 }
 
+# Warning band: 10 % of (max - min) near each threshold boundary.
+# Must match WARNING_PCT in check_seuil() in pipeline_db.sql.
+WARNING_PCT = 0.10
+
+# Minimum consecutive warning slots needed to trigger the DB Avertissement.
+# Must match WARNING_N in check_seuil().
+WARNING_N = 3
+
+
 # ─── Value generation ──────────────────────────────────────────────────────────
-def generate_value(sensor_id: str, ts: datetime, anomaly: bool = False) -> float:
+def generate_value(
+    sensor_id: str,
+    ts: datetime,
+    anomaly: bool = False,
+    warning: bool = False,
+) -> float:
+    """
+    Generate a sensor reading for the given timestamp.
+
+    anomaly=True  → value crosses the threshold   (triggers Critique)
+    warning=True  → value inside threshold but within the 10 % danger band
+                    (triggers Avertissement after WARNING_N consecutive readings)
+    default       → normal operating value
+    """
     cfg = SENSORS[sensor_id]
+    mn, mx = cfg["threshold"]
+    plage = mx - mn
+
+    if anomaly:
+        if random.choice(["high", "low"]) == "high":
+            return round(mx + random.uniform(0.1 * plage, 0.4 * plage), 3)
+        else:
+            return round(mn - random.uniform(0.1 * plage, 0.4 * plage), 3)
+
+    if warning:
+        margin = plage * WARNING_PCT
+        # Pick the low or high danger band (inside the threshold)
+        if random.choice(["high", "low"]) == "high":
+            # Just below max: [mx - margin, mx]
+            return round(random.uniform(mx - margin, mx), 3)
+        else:
+            # Just above min: [mn, mn + margin]
+            return round(random.uniform(mn, mn + margin), 3)
+
+    # ── Normal reading: sinusoidal daily cycle + Gaussian noise ──────────────
     hour = ts.hour + ts.minute / 60
     cycle_phase = math.sin((hour - 2) * math.pi / 12)
     trend = cfg["normal_base"] + cfg["daily_amplitude"] * cycle_phase * 0.5
     noise = random.gauss(0, cfg["noise_std"])
     value = trend + noise
+    # Clamp to well inside normal range (avoid accidental near-threshold values)
+    inner_lo = mn + plage * (WARNING_PCT + 0.05)
+    inner_hi = mx - plage * (WARNING_PCT + 0.05)
+    return round(max(inner_lo, min(inner_hi, value)), 3)
 
-    if anomaly:
-        mn, mx = cfg["threshold"]
-        plage = mx - mn
-        if random.choice(["high", "low"]) == "high":
-            value = mx + random.uniform(0.1 * plage, 0.4 * plage)
-        else:
-            value = mn - random.uniform(0.1 * plage, 0.4 * plage)
 
-    return round(value, 3)
+# ─── Anomaly & warning scheduling ─────────────────────────────────────────────
+def build_event_schedule(
+    days: int, interval_minutes: int = 5
+) -> tuple[set, set]:
+    """
+    Returns two sets of (capteur_id, slot) tuples:
+      anomaly_slots  — full threshold-crossing events (Critique)
+      warning_slots  — warning-band events (Avertissement)
 
-# ─── Anomaly scheduling ────────────────────────────────────────────────────────
-def build_anomaly_schedule(days: int, interval_minutes: int = 5) -> set:
+    Warning events are always injected in runs of WARNING_N consecutive slots
+    so the DB trigger actually fires.
+    """
     total_slots = days * 24 * 60 // interval_minutes
-    anomaly_slots = set()
+    anomaly_slots: set[tuple] = set()
+    warning_slots: set[tuple] = set()
+
     for capteur_id in SENSORS:
-        num_events = random.randint(days // 7, days // 7 * 2 + 1)
-        for _ in range(num_events):
+        # ── Critique events ─────────────────────────────────────────────────
+        num_crit = random.randint(days // 7, days // 7 * 2 + 1)
+        for _ in range(num_crit):
             start_slot = random.randint(0, total_slots - 10)
             duration = random.randint(3, 9)
             for s in range(start_slot, start_slot + duration):
                 anomaly_slots.add((capteur_id, s))
+        # Sparse single-slot critiques
         for slot in range(total_slots):
             if random.random() < 0.005:
                 anomaly_slots.add((capteur_id, slot))
-    return anomaly_slots
+
+        # ── Avertissement events ─────────────────────────────────────────────
+        # Roughly 2× as many warning episodes as critique episodes, each
+        # lasting exactly WARNING_N slots so the DB trigger fires once per run.
+        num_warn = random.randint(days // 4, days // 3)
+        for _ in range(num_warn):
+            start_slot = random.randint(0, total_slots - WARNING_N - 1)
+            for s in range(start_slot, start_slot + WARNING_N):
+                # Don't overlap with a critique slot (critique takes priority)
+                if (capteur_id, s) not in anomaly_slots:
+                    warning_slots.add((capteur_id, s))
+
+    return anomaly_slots, warning_slots
+
 
 # ─── Maintenance generation ────────────────────────────────────────────────────
 def generate_maintenance_records(conn):
@@ -166,13 +230,15 @@ def generate_maintenance_records(conn):
     if records:
         with conn.cursor() as cur:
             cur.executemany(
-                "INSERT INTO maintenance (machine_id, date, type, description) VALUES (%s, %s, %s, %s)",
+                "INSERT INTO maintenance (machine_id, date, type, description) "
+                "VALUES (%s, %s, %s, %s)",
                 records
             )
         conn.commit()
         print(f"  ✅ Inserted {len(records)} maintenance records")
     else:
         print("  ℹ️  No maintenance records generated (not enough alerts)")
+
 
 # ─── Budget period check ───────────────────────────────────────────────────────
 def ensure_budget_periods(conn, start_time: datetime, end_time: datetime):
@@ -196,6 +262,7 @@ def ensure_budget_periods(conn, start_time: datetime, end_time: datetime):
     conn.commit()
     print(f"  ✅ Budget periods ensured: {sorted(periods)}")
 
+
 # ─── Main backfill ─────────────────────────────────────────────────────────────
 def run_backfill(days: int = 30, interval_minutes: int = 5, dry_run: bool = False):
     now        = datetime.now().replace(second=0, microsecond=0)
@@ -210,15 +277,18 @@ def run_backfill(days: int = 30, interval_minutes: int = 5, dry_run: bool = Fals
     print(f"   Dry run     : {dry_run}")
     print("─" * 60)
 
-    anomaly_slots = build_anomaly_schedule(days, interval_minutes)
-    print(f"   Anomaly slots planned: {len(anomaly_slots)}")
+    anomaly_slots, warning_slots = build_event_schedule(days, interval_minutes)
+    print(f"   Critique slots planned    : {len(anomaly_slots)}")
+    print(f"   Avertissement slots planned: {len(warning_slots)}")
 
     if dry_run:
         print("\n⚠️  Dry run — no data written to DB.")
         return
 
     conn = get_connection()
-    inserted, anomalies = 0, 0
+    inserted = 0
+    critique_readings = 0
+    warning_readings  = 0
 
     try:
         print("\n🗓️  Ensuring budget periods exist...")
@@ -231,50 +301,77 @@ def run_backfill(days: int = 30, interval_minutes: int = 5, dry_run: bool = Fals
             ts = start_time + timedelta(minutes=slot * interval_minutes)
             for capteur_id in SENSORS:
                 is_anomaly = (capteur_id, slot) in anomaly_slots
-                value = generate_value(capteur_id, ts, anomaly=is_anomaly)
+                is_warning = (not is_anomaly) and ((capteur_id, slot) in warning_slots)
+
+                value = generate_value(capteur_id, ts, anomaly=is_anomaly, warning=is_warning)
                 batch.append((capteur_id, value, ts))
+
                 if is_anomaly:
-                    anomalies += 1
+                    critique_readings += 1
+                elif is_warning:
+                    warning_readings += 1
 
             if len(batch) >= BATCH_SIZE:
                 with conn.cursor() as cur:
                     cur.executemany(
-                        "INSERT INTO mesure (capteur_id, valeur, timestamp) VALUES (%s, %s, %s)",
+                        "INSERT INTO mesure (capteur_id, valeur, timestamp) "
+                        "VALUES (%s, %s, %s)",
                         batch
                     )
                 conn.commit()
                 inserted += len(batch)
                 batch = []
-                print(f"  ⏳ {inserted:,} rows inserted ({slot}/{total_slots} slots)...", end="\r")
+                print(
+                    f"  ⏳ {inserted:,} rows inserted "
+                    f"({slot}/{total_slots} slots)...",
+                    end="\r"
+                )
 
         if batch:
             with conn.cursor() as cur:
                 cur.executemany(
-                    "INSERT INTO mesure (capteur_id, valeur, timestamp) VALUES (%s, %s, %s)",
+                    "INSERT INTO mesure (capteur_id, valeur, timestamp) "
+                    "VALUES (%s, %s, %s)",
                     batch
                 )
             conn.commit()
             inserted += len(batch)
 
         print(f"\n  ✅ Inserted {inserted:,} mesure rows")
-        print(f"  ⚠️  Anomalous readings : {anomalies:,}")
+        print(f"  🔴 Critique readings injected    : {critique_readings:,}")
+        print(f"  🟡 Avertissement readings injected: {warning_readings:,}")
 
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM alerte")
-            print(f"  🔴 Alerts generated   : {cur.fetchone()[0]:,}")
+            cur.execute(
+                "SELECT type_alerte, COUNT(*) FROM alerte GROUP BY type_alerte ORDER BY type_alerte"
+            )
+            rows = cur.fetchall()
+            print("\n  🔔 Alerts generated by type:")
+            for type_alerte, count in rows:
+                icon = "🟡" if type_alerte == "Avertissement" else (
+                       "✅" if type_alerte == "Resolue" else "🔴")
+                print(f"     {icon} {type_alerte}: {count:,}")
 
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*), COALESCE(SUM(cout), 0) FROM transaction_volume")
+            cur.execute(
+                "SELECT COUNT(*), COALESCE(SUM(cout), 0) FROM transaction_volume"
+            )
             tx_count, total_cout = cur.fetchone()
-            print(f"  💰 Transactions       : {tx_count:,} (total cost: {total_cout:,.2f} DZD)")
+            print(f"\n  💰 Transactions : {tx_count:,} (total cost: {total_cout:,.2f} DZD)")
 
         with conn.cursor() as cur:
-            cur.execute("SELECT pipeline_id, periode, cout_total, solde FROM budget ORDER BY pipeline_id, periode")
+            cur.execute(
+                "SELECT pipeline_id, periode, cout_total, solde "
+                "FROM budget ORDER BY pipeline_id, periode"
+            )
             rows = cur.fetchall()
             if rows:
                 print("\n  📊 Budget summary:")
                 for r in rows:
-                    print(f"     Pipeline {r[0]} | {r[1]} | spent: {r[2]:,.2f} | remaining: {r[3]:,.2f} DZD")
+                    print(
+                        f"     Pipeline {r[0]} | {r[1]} | "
+                        f"spent: {r[2]:,.2f} | remaining: {r[3]:,.2f} DZD"
+                    )
 
         print("\n🔧 Generating maintenance records...")
         generate_maintenance_records(conn)
