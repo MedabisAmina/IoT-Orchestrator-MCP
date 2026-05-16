@@ -31,8 +31,8 @@ def get_connection():
         host=os.getenv("POSTGRES_HOST", "localhost"),
         port=int(os.getenv("POSTGRES_PORT", 5432)),
         dbname=os.getenv("POSTGRES_DB", "pipeline_db"),
-        user=os.getenv("POSTGRES_USER", "iotuser"),
-        password=os.getenv("POSTGRES_PASS", "iotfrontier"),
+        user=os.getenv("POSTGRES_USER", "postgres"),
+        password=os.getenv("POSTGRES_PASS", "malak2004"),
     )
 
 # =========================================================

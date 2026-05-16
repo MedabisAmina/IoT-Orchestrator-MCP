@@ -19,6 +19,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import google.generativeai as genai
+from pydantic import BaseModel
 
 # ─── Load .env from project root ──────────────────────────────────────────────
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -35,6 +37,10 @@ app = FastAPI(
     version="1.0.0",
 )
 
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+model = genai.GenerativeModel("gemini-2.5-flash")
+
 # ─── CORS — allow all origins so the React frontend can reach the API ─────────
 app.add_middleware(
     CORSMiddleware,
@@ -49,8 +55,8 @@ def get_db():
         host=os.getenv("POSTGRES_HOST", "localhost"),
         port=int(os.getenv("POSTGRES_PORT", 5432)),
         dbname=os.getenv("POSTGRES_DB",   "pipeline_db"),
-        user=os.getenv("POSTGRES_USER",   "iotuser"),
-        password=os.getenv("POSTGRES_PASS", "iotfrontier"),
+        user=os.getenv("POSTGRES_USER",   "postgres"),
+        password=os.getenv("POSTGRES_PASS", "malak2004"),
     )
 
 # ─── Helper: check if backfill already ran ────────────────────────────────────
@@ -191,6 +197,27 @@ def get_transactions(limit: int = 200):
                     r[key] = float(r[key])
         return rows
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ChatRequest(BaseModel):
+    message: str
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    try:
+        response = model.generate_content(f"""
+        Tu es un assistant expert en monitoring de pipelines pétroliers et gaziers.
+
+        Question utilisateur:
+        {req.message}
+        """)
+
+        return {
+            "reply": response.text
+        }
+
+    except Exception as e:
+        print("GEMINI ERROR:", repr(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

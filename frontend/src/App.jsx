@@ -329,22 +329,19 @@ export default function PipelineDashboard() {
     setMessages(prev => [...prev, { role: "user", text: msg }, { role: "ai", text: null }]);
 
     try {
-      const res = await fetch("/anthropic/v1/messages", {
+      const res = await fetch("http://localhost:8000/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: CLAUDE_MODEL,
-          max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          messages: newHistory,
+          message: msg,
         }),
       });
+
+
       const data = await res.json();
-      const reply = data.content?.[0]?.text || "Erreur: réponse vide.";
+      const reply = data.reply || "Erreur: réponse vide.";
       setChatHistory(h => [...h, { role: "assistant", content: reply }]);
       setMessages(prev => {
         const copy = [...prev];
@@ -354,7 +351,7 @@ export default function PipelineDashboard() {
     } catch {
       setMessages(prev => {
         const copy = [...prev];
-        copy[copy.length - 1] = { role: "ai", text: "ERROR:Erreur de connexion à l'API Claude." };
+        copy[copy.length - 1] = { role: "ai", text: "ERROR:Erreur de connexion à l'API." };
         return copy;
       });
     }
