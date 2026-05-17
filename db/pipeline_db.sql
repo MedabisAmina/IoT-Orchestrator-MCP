@@ -457,3 +457,279 @@ INSERT INTO tarif (tarif_id, type_produit, type_mesure, prix_unitaire, unite, da
 INSERT INTO budget (pipeline_id, periode, budget_alloue, cout_total) VALUES
 ('P1', '2025-05', 500000, 0),
 ('P2', '2025-05', 300000, 0);
+
+
+
+
+DELETE FROM seuil_capteur WHERE capteur_id = 'C4';
+DELETE FROM mesure       WHERE capteur_id = 'C4';
+DELETE FROM alerte       WHERE capteur_id = 'C4';
+DELETE FROM capteur      WHERE capteur_id = 'C4';
+
+ALTER TABLE capteur DROP CONSTRAINT capteur_type_mesure_check;
+ALTER TABLE capteur ADD CONSTRAINT capteur_type_mesure_check
+  CHECK (type_mesure IN ('Pression', 'Debit', 'Temperature'));
+
+
+ALTER TABLE transaction_volume DROP CONSTRAINT transaction_volume_cout_check;
+ALTER TABLE transaction_volume ADD CONSTRAINT transaction_volume_cout_check 
+  CHECK (cout >= 0);
+
+
+
+CREATE OR REPLACE FUNCTION calc_cout()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_station_type VARCHAR;
+  v_type_mesure  VARCHAR;
+  v_type_produit VARCHAR;
+  v_tarif_id     VARCHAR;
+  v_prix         FLOAT;
+  v_cout         FLOAT;
+  v_station_id   VARCHAR;
+  v_pipeline_id  VARCHAR;
+BEGIN
+  SELECT c.type_mesure, m.station_id
+  INTO v_type_mesure, v_station_id
+  FROM capteur c
+  JOIN machine m ON c.machine_id = m.machine_id
+  WHERE c.capteur_id = NEW.capteur_id;
+
+  SELECT type_station, pipeline_id
+  INTO v_station_type, v_pipeline_id
+  FROM station WHERE station_id = v_station_id;
+
+  IF v_station_type = 'TerminalArrivee' AND v_type_mesure != 'Vibration' THEN
+
+    SELECT p.type_produit INTO v_type_produit
+    FROM pipeline p WHERE p.pipeline_id = v_pipeline_id;
+
+    SELECT tarif_id, prix_unitaire INTO v_tarif_id, v_prix
+    FROM tarif
+    WHERE type_produit = v_type_produit
+      AND type_mesure  = v_type_mesure
+    ORDER BY date_effet DESC LIMIT 1;
+
+    IF v_tarif_id IS NULL THEN
+      RETURN NEW;
+    END IF;
+
+    v_cout := ABS(NEW.valeur) * v_prix;
+
+    INSERT INTO transaction_volume (
+      station_id, capteur_id, tarif_id, type_mesure, valeur, cout, timestamp
+    ) VALUES (
+      v_station_id, NEW.capteur_id, v_tarif_id,
+      v_type_mesure, NEW.valeur, v_cout, NEW.timestamp
+    );
+
+    UPDATE budget
+    SET cout_total = cout_total + v_cout
+    WHERE pipeline_id = v_pipeline_id
+      AND periode = TO_CHAR(NEW.timestamp, 'YYYY-MM');
+
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- -------------------------------------------------------
+-- PROCÉDURE 1 : resolve_alert
+-- -------------------------------------------------------
+CREATE OR REPLACE PROCEDURE resolve_alert(p_alerte_id INT)
+LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE alerte
+    SET
+        message     = CONCAT('[RÉSOLUE le ', NOW()::TEXT, '] ', message),
+        type_alerte = 'Resolue'
+    WHERE alerte_id = p_alerte_id;
+
+    UPDATE machine
+    SET status = 'EnMarche'
+    WHERE machine_id = (
+        SELECT c.machine_id
+        FROM capteur c
+        JOIN alerte a ON c.capteur_id = a.capteur_id
+        WHERE a.alerte_id = p_alerte_id
+        LIMIT 1
+    )
+    AND machine_id NOT IN (
+        SELECT DISTINCT c2.machine_id
+        FROM alerte a2
+        JOIN capteur c2 ON a2.capteur_id = c2.capteur_id
+        WHERE a2.type_alerte = 'Critique'
+          AND a2.alerte_id != p_alerte_id
+    );
+
+    RAISE NOTICE 'Alerte % résolue avec succès.', p_alerte_id;
+END;
+$$;
+
+-- -------------------------------------------------------
+-- FONCTION 2 : get_machine_summary
+-- -------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_machine_summary(p_zone_id VARCHAR)
+RETURNS TABLE(
+    status            VARCHAR,
+    nb_machines       BIGINT,
+    disponibilite_moy FLOAT
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        ma.status,
+        COUNT(*)::BIGINT AS nb_machines,
+        ROUND(AVG(ma.disponibilite)::NUMERIC, 2)::FLOAT AS disponibilite_moy
+    FROM machine ma
+    JOIN station  st ON ma.station_id  = st.station_id
+    JOIN pipeline pi ON st.pipeline_id = pi.pipeline_id
+    WHERE pi.zone_id = p_zone_id
+    GROUP BY ma.status
+    ORDER BY ma.status;
+END;
+$$;
+
+-- -------------------------------------------------------
+-- FONCTION 3 : get_alert_history
+-- -------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_alert_history(
+    p_machine_id VARCHAR,
+    p_nb_jours   INT DEFAULT 30
+)
+RETURNS TABLE(
+    alerte_id   INT,
+    capteur_id  VARCHAR,
+    type_mesure VARCHAR,
+    valeur      FLOAT,
+    alerte_timestamp TIMESTAMP,
+    type_alerte VARCHAR,
+    message     TEXT
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        a.alerte_id,
+        a.capteur_id,
+        c.type_mesure,
+        a.valeur,
+        a.timestamp,
+        a.type_alerte,
+        a.message
+    FROM alerte a
+    JOIN capteur c ON a.capteur_id = c.capteur_id
+    WHERE c.machine_id = p_machine_id
+      AND a.timestamp >= NOW() - (p_nb_jours || ' days')::INTERVAL
+    ORDER BY a.timestamp DESC;
+END;
+$$;
+
+
+
+
+-- 1. Add Warning to the alerte type (no CHECK constraint exists, so already allowed)
+-- But document it clearly. Warning fires when value is within 10% of min or max seuil.
+
+-- 2. Replace check_seuil to also detect near-threshold sustained readings
+CREATE OR REPLACE FUNCTION check_seuil()
+RETURNS TRIGGER AS $$
+DECLARE
+    seuil_min     FLOAT;
+    seuil_max     FLOAT;
+    marge_min     FLOAT;
+    marge_max     FLOAT;
+    recent_count  INT;
+    WARNING_PCT   FLOAT := 0.10;  -- 10% proximity to threshold
+    WARNING_N     INT   := 3;     -- must hold for 3 consecutive readings
+BEGIN
+    SELECT valeur_min, valeur_max
+    INTO seuil_min, seuil_max
+    FROM seuil_capteur
+    WHERE capteur_id = NEW.capteur_id;
+
+    -- ── CRITIQUE: value crosses the threshold ─────────────────
+    IF NEW.valeur < seuil_min OR NEW.valeur > seuil_max THEN
+        INSERT INTO alerte (capteur_id, valeur, timestamp, type_alerte, message)
+        VALUES (
+            NEW.capteur_id, NEW.valeur, NEW.timestamp,
+            'Critique', 'Seuil dépassé'
+        );
+        RETURN NEW;
+    END IF;
+
+    -- ── WARNING: value dangerously close to threshold ─────────
+    marge_min := seuil_min + (seuil_max - seuil_min) * WARNING_PCT;
+    marge_max := seuil_max - (seuil_max - seuil_min) * WARNING_PCT;
+
+    IF NEW.valeur <= marge_min OR NEW.valeur >= marge_max THEN
+        -- Count how many of the last N readings were also in warning zone
+        SELECT COUNT(*) INTO recent_count
+        FROM (
+            SELECT valeur FROM mesure
+            WHERE capteur_id = NEW.capteur_id
+              AND timestamp > NOW() - INTERVAL '10 minutes'
+            ORDER BY timestamp DESC
+            LIMIT WARNING_N - 1  -- exclude current (not yet inserted)
+        ) recent
+        WHERE valeur <= marge_min OR valeur >= marge_max;
+
+        -- Only insert Warning if previous readings were also close
+        IF recent_count >= WARNING_N - 1 THEN
+            -- Avoid duplicate warnings within 5 minutes
+            IF NOT EXISTS (
+                SELECT 1 FROM alerte
+                WHERE capteur_id = NEW.capteur_id
+                  AND type_alerte = 'Avertissement'
+                  AND timestamp > NOW() - INTERVAL '5 minutes'
+            ) THEN
+                INSERT INTO alerte (capteur_id, valeur, timestamp, type_alerte, message)
+                VALUES (
+                    NEW.capteur_id, NEW.valeur, NEW.timestamp,
+                    'Avertissement',
+                    FORMAT('Valeur proche du seuil depuis %s mesures consécutives', WARNING_N)
+                );
+            END IF;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+
+
+
+
+
+
+
