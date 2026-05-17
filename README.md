@@ -2,7 +2,7 @@
 
 An Industrial IoT monitoring platform for Oil & Gas pipeline infrastructure, specifically designed for the Edge-Fog continuum. This system bridges the "semantic gap" between raw sensor data and strategic decision-making using a Context-Aware Microservices Orchestration approach.
 
-It simulates real-time telemetry from Algerian pipeline networks, stores data in PostgreSQL, and exposes a high-level Model Context Protocol (MCP) server to enable AI Agents (like Claude) to perform natural language operations. A React-based dashboard provides a unified operator interface with live alerts, budget tracking, and an embedded AI assistant.
+It simulates real-time telemetry from Algerian pipeline networks, stores data in PostgreSQL, and exposes a high-level Model Context Protocol (MCP) server to enable AI Agents (like Claude , Gemini) to perform natural language operations. A React-based dashboard provides a unified operator interface with live alerts, budget tracking, and an embedded AI assistant.
 
 ---
 
