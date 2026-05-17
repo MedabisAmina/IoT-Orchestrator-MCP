@@ -17,7 +17,7 @@ PIPELINE_IOT/
 ├── frontend/
 │   └── PipelineDashboard.jsx    # React dashboard (chat · alerts · budget)
 ├── mcp/
-│   └── factory_mcp_server.py    # MCP server — 29 tools for Claude Desktop
+│   └── factory_mcp_server.py    # MCP server 
 ├── simulation/
 │   ├── simulator.py             # Real-time sensor loop (runs via API)
 │   └── backfill.py              # 30-day historical data generator
